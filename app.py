@@ -379,9 +379,12 @@ def main():
             on_change=on_editor_change, # 關鍵修正：勾選事件改用 Callback 處理
             column_config={
                 "勾選": st.column_config.CheckboxColumn("勾選", width="small"),
+                "科別": None, # 隱藏科別
+                "年級": None, # 隱藏年級
+                "學期": None, # 隱藏學期
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small"),
-                "冊次(1)": st.column_config.SelectboxColumn("冊次", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="large"),
-                "冊次(2)": st.column_config.SelectboxColumn("冊次(2)", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="large"),
+                "冊次(1)": st.column_config.SelectboxColumn("冊次", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="medium"), # 改回 medium
+                "冊次(2)": st.column_config.SelectboxColumn("冊次(2)", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="medium"), # 改回 medium
                 "適用班級": st.column_config.TextColumn("適用班級", width="medium"),
             }
         )
