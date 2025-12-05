@@ -214,6 +214,25 @@ def on_editor_change():
         st.session_state['cb_coop'] = False
         st.session_state['cb_all'] = False
 
+def auto_load_data():
+    """自動載入資料 (當科別/學期/年級變動時)"""
+    dept = st.session_state.get('dept_val')
+    sem = st.session_state.get('sem_val')
+    grade = st.session_state.get('grade_val')
+    
+    if dept and sem and grade:
+        # 這裡不使用 spinner，因為這是在 callback 中，介面更新會比較順
+        df = load_data(dept, sem, grade)
+        st.session_state['data'] = df
+        st.session_state['loaded'] = True
+        st.session_state['edit_index'] = None
+        st.session_state['active_classes'] = []
+        st.session_state['cb_reg'] = True
+        st.session_state['cb_prac'] = False
+        st.session_state['cb_coop'] = False
+        st.session_state['cb_all'] = False
+        update_class_list_from_checkboxes()
+
 # --- 7. 主程式 ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
@@ -238,23 +257,20 @@ def main():
             "國文科", "英文科", "數學科", "自然科", "社會科", 
             "資訊科技", "體育科", "國防科", "藝能科", "健護科", "輔導科", "閩南語"
         ]
-        dept = st.selectbox("科別", dept_options, key='dept_val')
-        col1, col2 = st.columns(2)
-        with col1: sem = st.selectbox("學期", ["1", "2"], key='sem_val')
-        with col2: grade = st.selectbox("年級", ["1", "2", "3"], key='grade_val')
         
-        if st.button("📥 載入/重置 表格", type="primary", use_container_width=True):
-            with st.spinner("讀取中..."):
-                df = load_data(dept, sem, grade)
-                st.session_state['data'] = df
-                st.session_state['loaded'] = True
-                st.session_state['edit_index'] = None
-                st.session_state['active_classes'] = []
-                st.session_state['cb_reg'] = True
-                st.session_state['cb_prac'] = False
-                st.session_state['cb_coop'] = False
-                st.session_state['cb_all'] = False
-                update_class_list_from_checkboxes()
+        # 綁定 auto_load_data 到 on_change 事件
+        dept = st.selectbox("科別", dept_options, key='dept_val', on_change=auto_load_data)
+        col1, col2 = st.columns(2)
+        with col1: sem = st.selectbox("學期", ["1", "2"], key='sem_val', on_change=auto_load_data)
+        with col2: grade = st.selectbox("年級", ["1", "2", "3"], key='grade_val', on_change=auto_load_data)
+        
+        # 手動載入按鈕 (保留作為備用)
+        if st.button("🔄 手動重新載入", type="secondary", use_container_width=True):
+            auto_load_data()
+
+    # 首次載入 (如果 state 已經準備好但 data 還沒載入)
+    if 'loaded' not in st.session_state and dept and sem and grade:
+        auto_load_data()
 
     if st.session_state.get('loaded'):
         
@@ -331,6 +347,7 @@ def main():
                     st.session_state['data'].at[idx, "適用班級"] = input_class_str
                     st.session_state['data'].at[idx, "備註"] = input_note
                     st.session_state['data'].at[idx, "勾選"] = False 
+                    
                     st.session_state['edit_index'] = None
                     st.success("更新成功！")
                     st.rerun()
@@ -352,8 +369,7 @@ def main():
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 修正：冊次改為 small，列高加大則依賴文字換行 (TextColumn 預設支援)
-        # 隱藏 科別、年級、學期
+        # 修正：隱藏 科別/年級/學期，並調整冊次寬度為 small
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -369,7 +385,7 @@ def main():
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small"),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=False),
                 "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium"),
-                # 冊次改為 small，比較不占空間
+                # 冊次改為 small
                 "冊次(1)": st.column_config.SelectboxColumn("冊次", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="small"), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small"),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small"),
@@ -377,7 +393,7 @@ def main():
                 "冊次(2)": st.column_config.SelectboxColumn("冊次(2)", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="small"), # 改為 small
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small"),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small"),
-                "適用班級": st.column_config.TextColumn("適用班級", width="large"), # 班級給大一點空間，並會自動換行
+                "適用班級": st.column_config.TextColumn("適用班級", width="large"), 
                 "備註": st.column_config.TextColumn("備註", width="medium"),
             }
         )
@@ -395,7 +411,7 @@ def main():
                             st.balloons()
 
     else:
-        st.info("👈 請先在左側按「載入」")
+        st.info("👈 請先在左側選擇科別")
 
 if __name__ == "__main__":
     main()
