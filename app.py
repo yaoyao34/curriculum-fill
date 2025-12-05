@@ -148,7 +148,6 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 
 # --- 6. Callbacks ---
 def update_class_list_from_checkboxes():
-    """學制 Checkbox 變動時觸發"""
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
     current_list = list(st.session_state['active_classes'])
@@ -234,22 +233,26 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # --- CSS 注入：強制表格換行與增高，並放大字體 ---
+    # --- CSS 強制注入 (字體放大 + 強制換行) ---
     st.markdown("""
         <style>
+        /* 表格資料儲存格 */
         div[data-testid="stDataEditor"] table td {
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-            vertical-align: top !important;
-            height: auto !important;
-            min-height: 60px !important;
-            font-size: 16px !important; /* 放大字體 */
+            font-size: 18px !important;       /* 字體加大 */
+            white-space: normal !important;   /* 允許換行 */
+            word-wrap: break-word !important; /* 長單字斷行 */
+            line-height: 1.5 !important;      /* 行高 */
+            vertical-align: top !important;   /* 內容置頂 */
+            padding-top: 10px !important;
+            padding-bottom: 10px !important;
         }
-        /* 表頭也要放大 */
+        /* 表頭 */
         div[data-testid="stDataEditor"] table th {
-            font-size: 16px !important;
+            font-size: 18px !important;
             font-weight: bold !important;
+            background-color: #f0f2f6 !important;
         }
+        /* 隱藏 index */
         thead tr th:first-child { display: none }
         tbody th { display: none }
         </style>
@@ -406,7 +409,7 @@ def main():
                 "學期": None,
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
-                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="large", disabled=True), # 改回 large (配合換行)
+                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="large", disabled=True),
                 "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
@@ -414,7 +417,7 @@ def main():
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), # 改為 medium
+                "適用班級": st.column_config.TextColumn("適用班級", width="large", disabled=True), 
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             }
         )
