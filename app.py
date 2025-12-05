@@ -12,6 +12,7 @@ SHEET_CURRICULUM = "DB_Curriculum"
 SHEET_SUBMISSION = "Submission_Records"
 
 # --- 0. 班級對照表 ---
+# 只有「專業科系」需要列在這裡，共同科目會自動抓全部
 DEPT_CLASS_MAP = {
     "機械科": { "普通科": ["機甲", "機乙"], "建教班": ["機丙", "模丙"], "實用技能班": ["機加"] },
     "電機科": { "普通科": ["電甲", "電乙"], "建教班": [], "實用技能班": ["電修"] },
@@ -67,7 +68,7 @@ def load_data(dept, semester, grade):
         return pd.DataFrame()
 
     display_rows = []
-    # 預設載入邏輯：比對歷史紀錄
+    # 預設載入邏輯：比對歷史紀錄 (支援多本書)
     for _, row in target_courses.iterrows():
         c_name = row['課程名稱']
         c_type = row['課程類別']
@@ -93,9 +94,8 @@ def load_data(dept, semester, grade):
             })
     return pd.DataFrame(display_rows)
 
-# --- 3. 取得該科別的課程選單 (給側邊欄用) ---
+# --- 3. 取得該科別的課程選單 ---
 def get_course_list(dept, semester, grade):
-    # 簡單起見，直接讀取目前的 df (若已載入) 或重新篩選
     if 'data' in st.session_state and not st.session_state['data'].empty:
         return st.session_state['data']['課程名稱'].unique().tolist()
     return []
@@ -122,16 +122,29 @@ def save_submission(df_to_save):
     ws_sub.append_rows(data_list)
     return True
 
-# --- 5. 班級字串產生器 ---
+# --- 5. 班級字串產生器 (修正版) ---
 def generate_class_string(dept, grade, use_reg, use_prac, use_coop):
     if not dept or not grade: return ""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
-    config = DEPT_CLASS_MAP.get(dept, DEPT_CLASS_MAP["default"])
+    
+    # 判斷邏輯：
+    # 如果選的是「機械科、建築科」等有特定設定的 -> 只抓該科的班
+    # 如果選的是「國文科、數學科」等 (不在設定檔裡) -> 抓全部科系的班
+    if dept in DEPT_CLASS_MAP and dept != "default":
+        target_configs = [DEPT_CLASS_MAP[dept]]
+    else:
+        # 抓取所有專業科系的設定 (排除 default)
+        target_configs = [conf for k, conf in DEPT_CLASS_MAP.items() if k != "default"]
+
     classes = []
-    if use_reg: classes.extend([f"{prefix}{c}" for c in config.get("普通科", [])])
-    if use_prac: classes.extend([f"{prefix}{c}" for c in config.get("實用技能班", [])])
-    if use_coop and str(grade) != "3": classes.extend([f"{prefix}{c}" for c in config.get("建教班", [])])
-    return ",".join(classes)
+    for config in target_configs:
+        if use_reg: classes.extend([f"{prefix}{c}" for c in config.get("普通科", [])])
+        if use_prac: classes.extend([f"{prefix}{c}" for c in config.get("實用技能班", [])])
+        if use_coop and str(grade) != "3": classes.extend([f"{prefix}{c}" for c in config.get("建教班", [])])
+    
+    # 去除重複並排序
+    unique_classes = sorted(list(set(classes)))
+    return ",".join(unique_classes)
 
 # --- 6. 主程式 ---
 def main():
@@ -140,7 +153,7 @@ def main():
 
     with st.sidebar:
         st.header("1. 填報設定")
-        dept = st.selectbox("科別", ["建築科", "機械科", "電機科", "製圖科", "室設科", "國文科", "英文科", "數學科", "自然科", "社會科"])
+        dept = st.selectbox("科別", ["建築科", "機械科", "電機科", "製圖科", "室設科", "國文科", "英文科", "數學科", "自然科", "社會科", "體育科", "國防科", "藝能科", "健護科", "輔導科"])
         col1, col2 = st.columns(2)
         with col1: sem = st.selectbox("學期", ["1", "2"])
         with col2: grade = st.selectbox("年級", ["1", "2", "3"])
@@ -154,13 +167,13 @@ def main():
     # --- 顯示主畫面 ---
     if st.session_state.get('loaded'):
         
-        # --- 側邊欄：新增課程表單 (在這裡操作！) ---
+        # --- 側邊欄：新增課程表單 ---
         with st.sidebar:
             st.divider()
             st.subheader("2. 新增/插入課程")
             st.info("👇 在這裡填寫，按按鈕直接加入右邊表格")
             
-            # 課程選單 (從已載入的資料中抓取課程清單)
+            # 課程選單
             course_list = get_course_list(dept, sem, grade)
             input_course = st.selectbox("選擇課程", course_list) if course_list else st.text_input("課程名稱")
             
@@ -171,7 +184,7 @@ def main():
             with c2: u_prac = st.checkbox("實技")
             with c3: u_coop = st.checkbox("建教")
             
-            # 即時計算班級字串
+            # 即時計算班級字串 (會根據科別自動判斷)
             auto_class_str = generate_class_string(dept, grade, u_reg, u_prac, u_coop)
             input_class = st.text_input("適用班級 (可手動修)", value=auto_class_str)
             
@@ -184,24 +197,22 @@ def main():
 
             # 加入按鈕
             if st.button("➕ 加入表格", type="secondary", use_container_width=True):
-                # 建立新的一列資料
                 new_row = {
                     "科別": dept, "年級": grade, "學期": sem,
-                    "課程類別": "部定必修", # 預設，可去右邊改
+                    "課程類別": "部定必修", 
                     "課程名稱": input_course,
                     "教科書(優先1)": input_book, "冊次(1)": input_vol, "出版社(1)": input_pub, "審定字號(1)": "",
                     "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
                     "適用班級": input_class,
                     "備註": input_note
                 }
-                # 加到 Session State 的 DataFrame
                 st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
                 st.success(f"已加入：{input_course}")
 
         # --- 中央顯示區 ---
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 顯示可編輯表格 (此處也能手動改)
+        # 顯示可編輯表格
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
