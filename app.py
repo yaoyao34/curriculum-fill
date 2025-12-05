@@ -79,7 +79,7 @@ def load_data(dept, semester, grade):
         if not hist_matches.empty:
             for _, h_row in hist_matches.iterrows():
                 display_rows.append({
-                    "勾選": False, # 新增勾選欄位
+                    "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
                     "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
@@ -126,37 +126,43 @@ def save_submission(df_to_save):
     return True
 
 # --- 5. 班級計算與解析 ---
-def get_all_possible_classes(grade):
+def generate_class_string(dept, grade, use_reg, use_prac, use_coop):
+    if not dept or not grade: return ""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
-    if not prefix: return []
-    classes = []
-    for sys_name, suffixes in ALL_SUFFIXES.items():
-        if str(grade) == "3" and sys_name == "建教班": continue
-        for s in suffixes: classes.append(f"{prefix}{s}")
-    return sorted(list(set(classes)))
-
-def get_default_classes(dept, grade):
-    prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
-    defaults = []
+    
+    # 判斷是否為專業科系
     if dept in DEPT_SPECIFIC_CONFIG:
         config = DEPT_SPECIFIC_CONFIG[dept]
-        for sys_name, suffixes in config.items():
-            if str(grade) == "3" and sys_name == "建教班": continue
-            for s in suffixes: defaults.append(f"{prefix}{s}")
+        classes = []
+        if use_reg: classes.extend([f"{prefix}{c}" for c in config.get("普通科", [])])
+        if use_prac: classes.extend([f"{prefix}{c}" for c in config.get("實用技能班", [])])
+        if use_coop and str(grade) != "3": classes.extend([f"{prefix}{c}" for c in config.get("建教班", [])])
+        return ",".join(classes)
     else:
-        return get_all_possible_classes(grade)
-    return sorted(list(set(defaults)))
+        # 共同科目：抓全校
+        classes = []
+        for sys_name, suffixes in ALL_SUFFIXES.items():
+            if str(grade) == "3" and sys_name == "建教班": continue
+            # 根據勾選決定是否加入該學制
+            if (sys_name == "普通科" and use_reg) or \
+               (sys_name == "實用技能班" and use_prac) or \
+               (sys_name == "建教班" and use_coop):
+                for s in suffixes: classes.append(f"{prefix}{s}")
+        return ",".join(sorted(list(set(classes))))
 
 # --- 6. 主程式 ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # 初始化 Session State (確保欄位有預設值)
-    keys_to_init = ['form_course', 'form_book1', 'form_vol1', 'form_pub1', 'form_book2', 'form_vol2', 'form_pub2', 'form_note', 'edit_index']
-    for k in keys_to_init:
-        if k not in st.session_state:
-            st.session_state[k] = "" if k != 'edit_index' else None
+    # 初始化 Session State
+    if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
+    # 使用 dict 來暫存表單資料，而不是直接綁定 widget key，避免衝突
+    if 'form_data' not in st.session_state:
+        st.session_state['form_data'] = {
+            'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 
+            'book2': '', 'vol2': '全', 'pub2': '', 'note': '', 'class_str': ''
+        }
 
     # --- 側邊欄：設定 ---
     with st.sidebar:
@@ -176,65 +182,99 @@ def main():
                 df = load_data(dept, sem, grade)
                 st.session_state['data'] = df
                 st.session_state['loaded'] = True
-                st.session_state['selected_classes'] = get_default_classes(dept, grade)
-                st.session_state['edit_index'] = None # 重置編輯狀態
+                st.session_state['edit_index'] = None
+                # 重置表單
+                st.session_state['form_data'] = {
+                    'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 
+                    'book2': '', 'vol2': '全', 'pub2': '', 'note': '', 'class_str': ''
+                }
 
     if st.session_state.get('loaded'):
         
         # --- 側邊欄：編輯表單 ---
         with st.sidebar:
             st.divider()
-            # 判斷是「新增」還是「修改」
             is_edit_mode = st.session_state['edit_index'] is not None
-            header_text = f"2. 修改第 {st.session_state['edit_index'] + 1} 列資料" if is_edit_mode else "2. 新增/插入課程"
+            header_text = f"2. 修改第 {st.session_state['edit_index'] + 1} 列" if is_edit_mode else "2. 新增/插入課程"
             st.subheader(header_text)
             
             if is_edit_mode:
-                st.info("💡 修改完後請按「更新表格」")
-                if st.button("❌ 取消修改 (切換回新增模式)", type="secondary"):
+                if st.button("❌ 取消修改 (回新增模式)", type="secondary"):
                     st.session_state['edit_index'] = None
+                    # 清空暫存
+                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                     st.rerun()
+
+            # 取得目前的暫存值 (可能是剛載入的，也可能是使用者剛輸入的)
+            current_form = st.session_state['form_data']
 
             # 課程選單
             course_list = get_course_list()
-            # 使用 key 綁定 session_state，實現雙向綁定
-            input_course = st.selectbox("選擇課程", course_list, key='form_course') if course_list else st.text_input("課程名稱", key='form_course')
+            # 如果是編輯模式且課程在清單中，設定 index
+            course_index = 0
+            if is_edit_mode and current_form['course'] in course_list:
+                course_index = course_list.index(current_form['course'])
+            
+            if course_list:
+                input_course = st.selectbox("選擇課程", course_list, index=course_index)
+            else:
+                input_course = st.text_input("課程名稱", value=current_form['course'])
             
             # 書籍資料 1
-            st.markdown("**第一優先 (必填)**")
-            input_book1 = st.text_input("書名", key='form_book1')
+            st.markdown("**第一優先**")
+            input_book1 = st.text_input("書名", value=current_form['book1'])
             bc1, bc2 = st.columns([1, 2])
-            with bc1: input_vol1 = st.selectbox("冊次", ["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], key='form_vol1')
-            with bc2: input_pub1 = st.text_input("出版社", key='form_pub1')
+            vol_opts = ["全", "上", "下", "I", "II", "III", "IV", "V", "VI"]
+            vol1_idx = vol_opts.index(current_form['vol1']) if current_form['vol1'] in vol_opts else 0
+            with bc1: input_vol1 = st.selectbox("冊次", vol_opts, index=vol1_idx)
+            with bc2: input_pub1 = st.text_input("出版社", value=current_form['pub1'])
 
-            # 書籍資料 2 (補回功能)
-            st.markdown("**第二優先 (選填)**")
-            input_book2 = st.text_input("備選書名", key='form_book2')
+            # 書籍資料 2
+            st.markdown("**第二優先**")
+            input_book2 = st.text_input("備選書名", value=current_form['book2'])
             bc3, bc4 = st.columns([1, 2])
-            with bc3: input_vol2 = st.selectbox("冊次(2)", ["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], key='form_vol2')
-            with bc4: input_pub2 = st.text_input("出版社(2)", key='form_pub2')
+            vol2_idx = vol_opts.index(current_form['vol2']) if current_form['vol2'] in vol_opts else 0
+            with bc3: input_vol2 = st.selectbox("冊次(2)", vol_opts, index=vol2_idx)
+            with bc4: input_pub2 = st.text_input("出版社(2)", value=current_form['pub2'])
             
-            # 班級選擇器 (Multiselect)
-            st.markdown("##### 適用班級 (點選編修)")
-            all_classes_opts = get_all_possible_classes(grade)
+            # --- 班級小幫手 (Checkbox 回歸！) ---
+            st.markdown("##### 適用班級")
+            st.caption("👇 勾選學制自動產生，也可手動修改下方文字框")
             
-            # 若無 selected_classes 初始化，給預設值
-            if 'selected_classes' not in st.session_state:
-                st.session_state['selected_classes'] = get_default_classes(dept, grade)
-
-            selected_classes = st.multiselect(
-                "班級列表：",
-                options=all_classes_opts,
-                key="selected_classes" # 這裡綁定 session_state
-            )
-            input_class_str = ",".join(selected_classes)
+            # 這裡使用 checkbox 來動態生成字串
+            # 注意：這裡不綁定 session_state，而是每次重新勾選就重新計算
+            # 為了讓編輯模式下能預設勾選，我們需要一點邏輯，但為了避免複雜，
+            # 這裡提供一個「重新產生」的按鈕邏輯比較簡單，或者直接讓使用者勾選後覆蓋
             
-            input_note = st.text_input("備註", key='form_note')
+            c1, c2, c3 = st.columns(3)
+            with c1: use_reg = st.checkbox("普通", value=True)
+            with c2: use_prac = st.checkbox("實技")
+            with c3: use_coop = st.checkbox("建教")
+            
+            # 計算新的字串
+            new_class_str = generate_class_string(dept, grade, use_reg, use_prac, use_coop)
+            
+            # 決定顯示在 text_input 的值：
+            # 如果是編輯模式剛載入(session有值)，優先顯示 session 的值 (原班級)
+            # 但如果使用者動了 checkbox (導致 rerun)，我們希望看到新字串
+            # 這裡做一個簡單的妥協：提供一個按鈕「套用勾選結果」
+            
+            # 或者：預設顯示 current_form['class_str']，如果為空則顯示 generated
+            display_class_str = current_form['class_str'] if current_form['class_str'] else new_class_str
+            
+            # 讓使用者可以點擊按鈕來用 checkbox 的結果覆蓋手動輸入框
+            if st.button("⬇️ 套用上方勾選結果"):
+                display_class_str = new_class_str
+            
+            input_class_str = st.text_input("班級字串 (可手動修)", value=display_class_str)
+            
+            input_note = st.text_input("備註", value=current_form['note'])
 
             # 按鈕：新增 或 更新
             if is_edit_mode:
                 if st.button("🔄 更新表格", type="primary", use_container_width=True):
                     idx = st.session_state['edit_index']
+                    # 更新 DataFrame
                     st.session_state['data'].at[idx, "課程名稱"] = input_course
                     st.session_state['data'].at[idx, "教科書(優先1)"] = input_book1
                     st.session_state['data'].at[idx, "冊次(1)"] = input_vol1
@@ -244,8 +284,11 @@ def main():
                     st.session_state['data'].at[idx, "出版社(2)"] = input_pub2
                     st.session_state['data'].at[idx, "適用班級"] = input_class_str
                     st.session_state['data'].at[idx, "備註"] = input_note
-                    st.session_state['data'].at[idx, "勾選"] = False # 更新完取消勾選
-                    st.session_state['edit_index'] = None # 退出編輯模式
+                    st.session_state['data'].at[idx, "勾選"] = False # 取消勾選
+                    
+                    # 清除狀態
+                    st.session_state['edit_index'] = None
+                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                     st.success("更新成功！")
                     st.rerun()
             else:
@@ -261,69 +304,51 @@ def main():
                         "備註": input_note
                     }
                     st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
+                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']} # 清空
                     st.success(f"已加入：{input_course}")
                     st.rerun()
 
         # --- 中央顯示區 ---
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 資料編輯器
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
             use_container_width=True,
             height=600,
             column_config={
-                "勾選": st.column_config.CheckboxColumn("勾選", help="勾選後可載入左側編輯", width="small"),
+                "勾選": st.column_config.CheckboxColumn("勾選", help="勾選後載入左側編輯", width="small"),
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small"),
                 "適用班級": st.column_config.TextColumn("適用班級", width="medium"),
             }
         )
 
-        # 邏輯：檢查是否有勾選動作
-        # 找出哪一列被勾選了
+        # 監聽勾選事件
         selected_rows = edited_df[edited_df["勾選"] == True]
-        
         if not selected_rows.empty:
-            # 取第一個被勾選的列
             target_idx = selected_rows.index[0]
-            row_data = selected_rows.iloc[0]
-            
-            # 如果這個 index 跟目前編輯的不一樣，代表使用者剛勾選
+            # 如果勾選了新的一行
             if st.session_state.get('edit_index') != target_idx:
+                row_data = selected_rows.iloc[0]
                 st.session_state['edit_index'] = target_idx
-                
-                # 將資料填入 Session State，側邊欄會自動抓取
-                st.session_state['form_course'] = row_data["課程名稱"]
-                st.session_state['form_book1'] = row_data["教科書(優先1)"]
-                st.session_state['form_vol1'] = row_data["冊次(1)"]
-                st.session_state['form_pub1'] = row_data["出版社(1)"]
-                st.session_state['form_book2'] = row_data["教科書(優先2)"]
-                st.session_state['form_vol2'] = row_data["冊次(2)"]
-                st.session_state['form_pub2'] = row_data["出版社(2)"]
-                st.session_state['form_note'] = row_data["備註"]
-                
-                # 處理班級字串轉列表
-                class_str = str(row_data["適用班級"])
-                if class_str:
-                    # 分割字串並去除空白
-                    class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-                    # 過濾掉不在選項內的奇怪班級，避免報錯，或者動態加入選項
-                    valid_opts = get_all_possible_classes(grade)
-                    final_list = [c for c in class_list if c in valid_opts]
-                    st.session_state['selected_classes'] = final_list
-                else:
-                    st.session_state['selected_classes'] = []
-                
+                # 將資料載入暫存 dict
+                st.session_state['form_data'] = {
+                    'course': row_data["課程名稱"],
+                    'book1': row_data["教科書(優先1)"],
+                    'vol1': row_data["冊次(1)"],
+                    'pub1': row_data["出版社(1)"],
+                    'book2': row_data["教科書(優先2)"],
+                    'vol2': row_data["冊次(2)"],
+                    'pub2': row_data["出版社(2)"],
+                    'note': row_data["備註"],
+                    'class_str': str(row_data["適用班級"])
+                }
                 st.rerun()
 
-        # 提交按鈕
         col_submit, _ = st.columns([1, 4])
         with col_submit:
             if st.button("💾 確認提交 (寫入資料庫)", type="primary", use_container_width=True):
-                # 提交前過濾掉「勾選」欄位，以免寫入 Google Sheet 報錯
                 final_df = edited_df.drop(columns=["勾選"])
-                
                 if final_df.empty:
                     st.error("表格是空的")
                 else:
