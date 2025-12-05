@@ -221,7 +221,6 @@ def auto_load_data():
     grade = st.session_state.get('grade_val')
     
     if dept and sem and grade:
-        # 這裡不使用 spinner，因為這是在 callback 中，介面更新會比較順
         df = load_data(dept, sem, grade)
         st.session_state['data'] = df
         st.session_state['loaded'] = True
@@ -258,17 +257,15 @@ def main():
             "資訊科技", "體育科", "國防科", "藝能科", "健護科", "輔導科", "閩南語"
         ]
         
-        # 綁定 auto_load_data 到 on_change 事件
         dept = st.selectbox("科別", dept_options, key='dept_val', on_change=auto_load_data)
         col1, col2 = st.columns(2)
         with col1: sem = st.selectbox("學期", ["1", "2"], key='sem_val', on_change=auto_load_data)
         with col2: grade = st.selectbox("年級", ["1", "2", "3"], key='grade_val', on_change=auto_load_data)
         
-        # 手動載入按鈕 (保留作為備用)
-        if st.button("🔄 手動重新載入", type="secondary", use_container_width=True):
+        # 手動載入 (備用)
+        if st.button("🔄 手動重載", type="secondary", use_container_width=True):
             auto_load_data()
 
-    # 首次載入 (如果 state 已經準備好但 data 還沒載入)
     if 'loaded' not in st.session_state and dept and sem and grade:
         auto_load_data()
 
@@ -322,7 +319,7 @@ def main():
             with c2: st.checkbox("實技", key="cb_prac", on_change=update_class_list_from_checkboxes)
             with c3: st.checkbox("建教", key="cb_coop", on_change=update_class_list_from_checkboxes)
             
-            st.caption("👇 點選加入其他班級 (可直接在此增刪)")
+            st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
             selected_classes = st.multiselect(
@@ -347,7 +344,6 @@ def main():
                     st.session_state['data'].at[idx, "適用班級"] = input_class_str
                     st.session_state['data'].at[idx, "備註"] = input_note
                     st.session_state['data'].at[idx, "勾選"] = False 
-                    
                     st.session_state['edit_index'] = None
                     st.success("更新成功！")
                     st.rerun()
@@ -369,7 +365,11 @@ def main():
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 修正：隱藏 科別/年級/學期，並調整冊次寬度為 small
+        # 定義哪些欄位要鎖定 (除了勾選以外全鎖)
+        # 注意: disabled=True 鎖定整個表格，我們只開放 '勾選'
+        # 在 st.data_editor 中，column_config 裡的 disabled=True 可以鎖定特定欄
+        # 為了達到「右邊不讓人編輯，一定要勾選編輯」，我們把所有資料欄位設為 disabled=True
+        
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -378,23 +378,22 @@ def main():
             key="main_editor",
             on_change=on_editor_change,
             column_config={
-                "勾選": st.column_config.CheckboxColumn("勾選", width="small"),
+                "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False), # 只有這個能按
                 "科別": None, 
                 "年級": None, 
                 "學期": None,
-                "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small"),
-                "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=False),
-                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium"),
-                # 冊次改為 small
-                "冊次(1)": st.column_config.SelectboxColumn("冊次", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="small"), 
-                "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small"),
-                "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small"),
-                "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium"),
-                "冊次(2)": st.column_config.SelectboxColumn("冊次(2)", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="small"), # 改為 small
-                "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small"),
-                "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small"),
-                "適用班級": st.column_config.TextColumn("適用班級", width="large"), 
-                "備註": st.column_config.TextColumn("備註", width="medium"),
+                "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small", disabled=True),
+                "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
+                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="large", disabled=True),
+                "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), # 冊次改 small
+                "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
+                "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
+                "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium", disabled=True),
+                "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), # 冊次改 small
+                "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
+                "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
+                "適用班級": st.column_config.TextColumn("適用班級", width="large", disabled=True), # 班級改 large (有助於換行)
+                "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             }
         )
 
