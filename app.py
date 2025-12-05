@@ -111,19 +111,13 @@ def save_submission(df_to_save):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
-        ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
+        ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次", "出版社", "字號", "教科書(2)", "冊次", "出版社", "字號", "適用班級", "備註"])
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data_list = []
-    
-    expected_cols = ["科別", "年級", "學期", "課程名稱", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "適用班級", "備註"]
-    for col in expected_cols:
-        if col not in df_to_save.columns: df_to_save[col] = ""
-
     for _, row in df_to_save.iterrows():
         data_list.append([
-            timestamp, 
-            row['科別'], row['年級'], row['學期'], row['課程名稱'],
+            timestamp, row['科別'], row['年級'], row['學期'], row['課程名稱'],
             row['教科書(優先1)'], row['冊次(1)'], row['出版社(1)'], row['審定字號(1)'],
             row['教科書(優先2)'], row['冊次(2)'], row['出版社(2)'], row['審定字號(2)'],
             row['適用班級'], row['備註']
@@ -154,6 +148,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 
 # --- 6. Callbacks ---
 def update_class_list_from_checkboxes():
+    """學制 Checkbox 變動時觸發"""
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
     current_list = list(st.session_state['active_classes'])
