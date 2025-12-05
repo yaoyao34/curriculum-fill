@@ -111,24 +111,21 @@ def save_submission(df_to_save):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
-        # 修正標題列，確保有兩個字號欄位，且名稱不重複
         ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data_list = []
     
-    # 確保 DataFrame 中有所有需要的欄位，避免 KeyError
     expected_cols = ["科別", "年級", "學期", "課程名稱", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "適用班級", "備註"]
     for col in expected_cols:
-        if col not in df_to_save.columns:
-            df_to_save[col] = "" # 若缺欄位則補空值
+        if col not in df_to_save.columns: df_to_save[col] = ""
 
     for _, row in df_to_save.iterrows():
         data_list.append([
             timestamp, 
             row['科別'], row['年級'], row['學期'], row['課程名稱'],
             row['教科書(優先1)'], row['冊次(1)'], row['出版社(1)'], row['審定字號(1)'],
-            row['教科書(優先2)'], row['冊次(2)'], row['出版社(2)'], row['審定字號(2)'], # 這裡確保寫入 字號(2)
+            row['教科書(優先2)'], row['冊次(2)'], row['出版社(2)'], row['審定字號(2)'],
             row['適用班級'], row['備註']
         ])
     ws_sub.append_rows(data_list)
@@ -242,6 +239,7 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
+    # --- CSS 注入：強制表格換行與增高，並放大字體 ---
     st.markdown("""
         <style>
         div[data-testid="stDataEditor"] table td {
@@ -250,6 +248,12 @@ def main():
             vertical-align: top !important;
             height: auto !important;
             min-height: 60px !important;
+            font-size: 16px !important; /* 放大字體 */
+        }
+        /* 表頭也要放大 */
+        div[data-testid="stDataEditor"] table th {
+            font-size: 16px !important;
+            font-weight: bold !important;
         }
         thead tr th:first-child { display: none }
         tbody th { display: none }
@@ -320,7 +324,7 @@ def main():
             vol1_idx = vol_opts.index(current_form['vol1']) if current_form['vol1'] in vol_opts else 0
             with bc1: input_vol1 = st.selectbox("冊次", vol_opts, index=vol1_idx)
             with bc2: input_pub1 = st.text_input("出版社", value=current_form['pub1'])
-            input_code1 = st.text_input("審定字號", value=current_form['code1']) # 補上字號欄位
+            input_code1 = st.text_input("審定字號", value=current_form['code1']) 
 
             st.markdown("**第二優先**")
             input_book2 = st.text_input("備選書名", value=current_form['book2'])
@@ -328,7 +332,7 @@ def main():
             vol2_idx = vol_opts.index(current_form['vol2']) if current_form['vol2'] in vol_opts else 0
             with bc3: input_vol2 = st.selectbox("冊次(2)", vol_opts, index=vol2_idx)
             with bc4: input_pub2 = st.text_input("出版社(2)", value=current_form['pub2'])
-            input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) # 補上字號欄位
+            input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) 
             
             st.markdown("##### 適用班級")
             st.caption("👇 勾選學制 (勾'全部'選全校)")
@@ -353,7 +357,6 @@ def main():
 
             if is_edit_mode:
                 if st.button("🔄 更新表格", type="primary", use_container_width=True):
-                    # 必填檢查
                     if not input_book1 or not input_pub1:
                         st.error("⚠️ 書名和出版社為必填！")
                     else:
@@ -375,7 +378,6 @@ def main():
                         st.rerun()
             else:
                 if st.button("➕ 加入表格", type="secondary", use_container_width=True):
-                    # 必填檢查
                     if not input_book1 or not input_pub1:
                         st.error("⚠️ 書名和出版社為必填！")
                     else:
@@ -409,7 +411,7 @@ def main():
                 "學期": None,
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
-                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="large", disabled=True),
+                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="large", disabled=True), # 改回 large (配合換行)
                 "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
@@ -417,7 +419,7 @@ def main():
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                "適用班級": st.column_config.TextColumn("適用班級", width="large", disabled=True), 
+                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), # 改為 medium
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             }
         )
