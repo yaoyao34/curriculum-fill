@@ -146,7 +146,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
-# --- 6. Callbacks (解決報錯的關鍵) ---
+# --- 6. Callbacks ---
 def update_class_list_from_checkboxes():
     """學制 Checkbox 變動時觸發"""
     dept = st.session_state.get('dept_val')
@@ -163,10 +163,8 @@ def update_class_list_from_checkboxes():
             for c in target_classes:
                 if c in current_list: current_list.remove(c)
     
-    # 這裡可以直接修改 widget key，因為我們在 callback 裡
     st.session_state['active_classes'] = sorted(list(set(current_list)))
     
-    # 連動 '全部'
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -181,11 +179,9 @@ def toggle_all_checkboxes():
     update_class_list_from_checkboxes()
 
 def on_editor_change():
-    """表格編輯/勾選變動時觸發 (處理勾選載入)"""
-    # 取得編輯內容
+    """表格編輯/勾選變動時觸發"""
     edits = st.session_state["main_editor"]["edited_rows"]
     
-    # 找出新勾選的列 (假設是單選，找第一個 True)
     target_idx = None
     for idx, changes in edits.items():
         if "勾選" in changes and changes["勾選"] is True:
@@ -193,12 +189,10 @@ def on_editor_change():
             break
             
     if target_idx is not None:
-        # 1. 單選互斥：先把所有勾選取消，再勾選目標
         st.session_state['data']["勾選"] = False
         st.session_state['data'].at[target_idx, "勾選"] = True
         st.session_state['edit_index'] = target_idx
         
-        # 2. 載入資料到表單
         row_data = st.session_state['data'].iloc[target_idx]
         st.session_state['form_data'] = {
             'course': row_data["課程名稱"],
@@ -207,7 +201,6 @@ def on_editor_change():
             'note': row_data["備註"]
         }
         
-        # 3. 載入班級到 Multiselect (這是報錯的地方，現在移到 callback 就安全了)
         class_str = str(row_data["適用班級"])
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         grade = st.session_state.get('grade_val')
@@ -216,7 +209,6 @@ def on_editor_change():
         
         st.session_state['active_classes'] = final_list
         
-        # 重置學制勾選
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
@@ -227,7 +219,6 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # 初始化 State
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
     if 'form_data' not in st.session_state:
@@ -240,7 +231,6 @@ def main():
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
 
-    # --- 側邊欄 ---
     with st.sidebar:
         st.header("1. 填報設定")
         dept_options = [
@@ -264,11 +254,10 @@ def main():
                 st.session_state['cb_prac'] = False
                 st.session_state['cb_coop'] = False
                 st.session_state['cb_all'] = False
-                update_class_list_from_checkboxes() # 初始化班級
+                update_class_list_from_checkboxes()
 
     if st.session_state.get('loaded'):
         
-        # --- 側邊欄：編輯表單 ---
         with st.sidebar:
             st.divider()
             is_edit_mode = st.session_state['edit_index'] is not None
@@ -283,7 +272,6 @@ def main():
 
             current_form = st.session_state['form_data']
 
-            # 課程選單
             course_list = get_course_list()
             course_index = 0
             if is_edit_mode and current_form['course'] in course_list:
@@ -294,7 +282,6 @@ def main():
             else:
                 input_course = st.text_input("課程名稱", value=current_form['course'])
             
-            # 書籍資料
             st.markdown("**第一優先**")
             input_book1 = st.text_input("書名", value=current_form['book1'])
             bc1, bc2 = st.columns([1, 2])
@@ -310,7 +297,6 @@ def main():
             with bc3: input_vol2 = st.selectbox("冊次(2)", vol_opts, index=vol2_idx)
             with bc4: input_pub2 = st.text_input("出版社(2)", value=current_form['pub2'])
             
-            # --- 班級設定 ---
             st.markdown("##### 適用班級")
             st.caption("👇 勾選學制 (勾'全部'選全校)")
             
@@ -326,13 +312,12 @@ def main():
             selected_classes = st.multiselect(
                 "最終班級列表:",
                 options=all_possible,
-                key="active_classes"  # 綁定 Callback 修改的 key
+                key="active_classes"
             )
             
             input_class_str = ",".join(selected_classes)
             input_note = st.text_input("備註", value=current_form['note'])
 
-            # 按鈕
             if is_edit_mode:
                 if st.button("🔄 更新表格", type="primary", use_container_width=True):
                     idx = st.session_state['edit_index']
@@ -346,7 +331,6 @@ def main():
                     st.session_state['data'].at[idx, "適用班級"] = input_class_str
                     st.session_state['data'].at[idx, "備註"] = input_note
                     st.session_state['data'].at[idx, "勾選"] = False 
-                    
                     st.session_state['edit_index'] = None
                     st.success("更新成功！")
                     st.rerun()
@@ -366,33 +350,41 @@ def main():
                     st.success(f"已加入：{input_course}")
                     st.rerun()
 
-        # --- 中央顯示區 ---
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 資料編輯器 (綁定 on_change)
+        # 修正：冊次改為 small，列高加大則依賴文字換行 (TextColumn 預設支援)
+        # 隱藏 科別、年級、學期
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
             use_container_width=True,
             height=600,
             key="main_editor",
-            on_change=on_editor_change, # 關鍵修正：勾選事件改用 Callback 處理
+            on_change=on_editor_change,
             column_config={
                 "勾選": st.column_config.CheckboxColumn("勾選", width="small"),
-                "科別": None, # 隱藏科別
-                "年級": None, # 隱藏年級
-                "學期": None, # 隱藏學期
+                "科別": None, 
+                "年級": None, 
+                "學期": None,
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small"),
-                "冊次(1)": st.column_config.SelectboxColumn("冊次", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="medium"), # 改回 medium
-                "冊次(2)": st.column_config.SelectboxColumn("冊次(2)", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="medium"), # 改回 medium
-                "適用班級": st.column_config.TextColumn("適用班級", width="medium"),
+                "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=False),
+                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium"),
+                # 冊次改為 small，比較不占空間
+                "冊次(1)": st.column_config.SelectboxColumn("冊次", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="small"), 
+                "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small"),
+                "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small"),
+                "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium"),
+                "冊次(2)": st.column_config.SelectboxColumn("冊次(2)", options=["全", "上", "下", "I", "II", "III", "IV", "V", "VI"], width="small"), # 改為 small
+                "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small"),
+                "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small"),
+                "適用班級": st.column_config.TextColumn("適用班級", width="large"), # 班級給大一點空間，並會自動換行
+                "備註": st.column_config.TextColumn("備註", width="medium"),
             }
         )
 
         col_submit, _ = st.columns([1, 4])
         with col_submit:
             if st.button("💾 確認提交 (寫入資料庫)", type="primary", use_container_width=True):
-                # 移除勾選欄位再提交
                 final_df = st.session_state['data'].drop(columns=["勾選"])
                 if final_df.empty:
                     st.error("表格是空的")
