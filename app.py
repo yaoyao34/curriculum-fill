@@ -148,7 +148,6 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 
 # --- 6. Callbacks ---
 def update_class_list_from_checkboxes():
-    """學制 Checkbox 變動時觸發"""
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
     current_list = list(st.session_state['active_classes'])
@@ -171,7 +170,6 @@ def update_class_list_from_checkboxes():
         st.session_state['cb_all'] = False
 
 def toggle_all_checkboxes():
-    """'全部' Checkbox 變動時觸發"""
     new_state = st.session_state['cb_all']
     st.session_state['cb_reg'] = new_state
     st.session_state['cb_prac'] = new_state
@@ -208,7 +206,6 @@ def on_editor_change():
         final_list = [c for c in class_list if c in valid_classes]
         
         st.session_state['active_classes'] = final_list
-        
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
@@ -237,6 +234,21 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
+    # --- CSS 注入：強制表格換行與增高 ---
+    # Streamlit 的表格預設不換行，這段 CSS 會強制開啟
+    st.markdown("""
+        <style>
+        /* 針對 data_editor 的儲存格 */
+        div[data-testid="stDataEditor"] table td {
+            white-space: pre-wrap !important; /* 強制換行 */
+            word-wrap: break-word !important; /* 長字強制斷行 */
+            vertical-align: top !important;   /* 文字置頂 */
+            height: auto !important;          /* 高度自動 */
+            min-height: 50px !important;      /* 最小高度 */
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
     if 'form_data' not in st.session_state:
@@ -257,12 +269,12 @@ def main():
             "資訊科技", "體育科", "國防科", "藝能科", "健護科", "輔導科", "閩南語"
         ]
         
+        # 綁定 auto_load_data
         dept = st.selectbox("科別", dept_options, key='dept_val', on_change=auto_load_data)
         col1, col2 = st.columns(2)
         with col1: sem = st.selectbox("學期", ["1", "2"], key='sem_val', on_change=auto_load_data)
         with col2: grade = st.selectbox("年級", ["1", "2", "3"], key='grade_val', on_change=auto_load_data)
         
-        # 手動載入 (備用)
         if st.button("🔄 手動重載", type="secondary", use_container_width=True):
             auto_load_data()
 
@@ -365,11 +377,6 @@ def main():
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 定義哪些欄位要鎖定 (除了勾選以外全鎖)
-        # 注意: disabled=True 鎖定整個表格，我們只開放 '勾選'
-        # 在 st.data_editor 中，column_config 裡的 disabled=True 可以鎖定特定欄
-        # 為了達到「右邊不讓人編輯，一定要勾選編輯」，我們把所有資料欄位設為 disabled=True
-        
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -378,21 +385,24 @@ def main():
             key="main_editor",
             on_change=on_editor_change,
             column_config={
-                "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False), # 只有這個能按
+                "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False),
                 "科別": None, 
                 "年級": None, 
                 "學期": None,
+                # 全部設為 disabled=True，只開放勾選
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
                 "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="large", disabled=True),
-                "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), # 冊次改 small
+                # 冊次改為 small
+                "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
                 "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium", disabled=True),
-                "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), # 冊次改 small
+                "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                "適用班級": st.column_config.TextColumn("適用班級", width="large", disabled=True), # 班級改 large (有助於換行)
+                # 適用班級：設定為 large 配合 CSS 強制換行
+                "適用班級": st.column_config.TextColumn("適用班級", width="large", disabled=True), 
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             }
         )
