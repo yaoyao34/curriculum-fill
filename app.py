@@ -233,20 +233,20 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # --- CSS 強制注入 (字體放大 + 強制換行) ---
+    # --- CSS 注入：強制表格換行與增高，並放大字體 ---
     st.markdown("""
         <style>
         /* 表格資料儲存格 */
         div[data-testid="stDataEditor"] table td {
-            font-size: 18px !important;       /* 字體加大 */
-            white-space: normal !important;   /* 允許換行 */
+            font-size: 18px !important;       /* 字體加大到 18px */
+            white-space: pre-wrap !important; /* 強制換行 */
             word-wrap: break-word !important; /* 長單字斷行 */
-            line-height: 1.5 !important;      /* 行高 */
             vertical-align: top !important;   /* 內容置頂 */
-            padding-top: 10px !important;
-            padding-bottom: 10px !important;
+            height: auto !important;
+            min-height: 60px !important;
+            line-height: 1.6 !important;      /* 增加行高讓閱讀更舒適 */
         }
-        /* 表頭 */
+        /* 表頭也要放大 */
         div[data-testid="stDataEditor"] table th {
             font-size: 18px !important;
             font-weight: bold !important;
@@ -409,7 +409,7 @@ def main():
                 "學期": None,
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
-                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="large", disabled=True),
+                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True), # 改為 medium
                 "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
@@ -417,7 +417,7 @@ def main():
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                "適用班級": st.column_config.TextColumn("適用班級", width="large", disabled=True), 
+                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), # 改為 medium
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             }
         )
