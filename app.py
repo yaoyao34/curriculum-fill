@@ -125,9 +125,8 @@ def save_submission(df_to_save):
     ws_sub.append_rows(data_list)
     return True
 
-# --- 5. 班級計算 ---
+# --- 5. 班級計算邏輯 ---
 def get_all_possible_classes(grade):
-    """取得該年級全校所有班級"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     classes = []
@@ -136,46 +135,71 @@ def get_all_possible_classes(grade):
         for s in suffixes: classes.append(f"{prefix}{s}")
     return sorted(list(set(classes)))
 
-def generate_class_list(dept, grade, use_reg, use_prac, use_coop):
-    """根據勾選產生基本班級列表"""
-    if not dept or not grade: return []
+def get_target_classes_for_dept(dept, grade, sys_name):
+    """取得特定科別、特定學制的班級列表"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
+    if not prefix: return []
     
-    classes = []
-    # 專業科系
+    suffixes = []
     if dept in DEPT_SPECIFIC_CONFIG:
-        config = DEPT_SPECIFIC_CONFIG[dept]
-        if use_reg: classes.extend([f"{prefix}{c}" for c in config.get("普通科", [])])
-        if use_prac: classes.extend([f"{prefix}{c}" for c in config.get("實用技能班", [])])
-        if use_coop and str(grade) != "3": classes.extend([f"{prefix}{c}" for c in config.get("建教班", [])])
-    # 共同科目
+        # 專業科系：只抓該科
+        suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
-        for sys_name, suffixes in ALL_SUFFIXES.items():
-            if str(grade) == "3" and sys_name == "建教班": continue
-            if (sys_name == "普通科" and use_reg) or \
-               (sys_name == "實用技能班" and use_prac) or \
-               (sys_name == "建教班" and use_coop):
-                for s in suffixes: classes.append(f"{prefix}{s}")
-    return sorted(list(set(classes)))
+        # 共同科目：抓全校該學制
+        suffixes = ALL_SUFFIXES.get(sys_name, [])
+        
+    # 三年級排除建教
+    if str(grade) == "3" and sys_name == "建教班":
+        return []
+        
+    return [f"{prefix}{s}" for s in suffixes]
 
-# --- 6. 主程式 ---
+# --- 6. 狀態管理 Callbacks ---
+def update_class_list_from_checkboxes():
+    """當 Checkbox 變動時，更新選單內容"""
+    dept = st.session_state.get('dept_val')
+    grade = st.session_state.get('grade_val')
+    
+    current_list = list(st.session_state['active_classes'])
+    
+    # 檢查三個學制的勾選狀態，決定是 加入 還是 移除
+    for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
+        is_checked = st.session_state[sys_key]
+        target_classes = get_target_classes_for_dept(dept, grade, sys_name)
+        
+        if is_checked:
+            # 加入：把這些班級加進 current_list (如果不重複)
+            for c in target_classes:
+                if c not in current_list:
+                    current_list.append(c)
+        else:
+            # 移除：只有當這個班級屬於該學制時才移除
+            # (避免誤刪手動加入的其他科班級，但這裡簡化邏輯：如果是該科該學制就刪)
+            for c in target_classes:
+                if c in current_list:
+                    current_list.remove(c)
+    
+    # 更新 Multiselect 的綁定變數
+    st.session_state['active_classes'] = sorted(list(set(current_list)))
+
+# --- 7. 主程式 ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
     # 初始化 State
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
+    if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
     if 'form_data' not in st.session_state:
         st.session_state['form_data'] = {
             'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 
-            'book2': '', 'vol2': '全', 'pub2': '', 'note': '', 'class_str': ''
+            'book2': '', 'vol2': '全', 'pub2': '', 'note': ''
         }
-    if 'extra_classes' not in st.session_state:
-        st.session_state['extra_classes'] = [] # 用來存 Multiselect 的值
     
-    # 用來控制 Checkbox 的狀態 (不用 key 綁定，改用 value)
-    if 'cb_state' not in st.session_state:
-        st.session_state['cb_state'] = {'reg': True, 'prac': False, 'coop': False}
+    # 初始化 Checkbox 狀態 (獨立變數)
+    if 'cb_reg' not in st.session_state: st.session_state['cb_reg'] = False
+    if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
+    if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
 
     # --- 側邊欄：設定 ---
     with st.sidebar:
@@ -185,10 +209,10 @@ def main():
             "國文科", "英文科", "數學科", "自然科", "社會科", 
             "資訊科技", "體育科", "國防科", "藝能科", "健護科", "輔導科", "閩南語"
         ]
-        dept = st.selectbox("科別", dept_options)
+        dept = st.selectbox("科別", dept_options, key='dept_val')
         col1, col2 = st.columns(2)
-        with col1: sem = st.selectbox("學期", ["1", "2"])
-        with col2: grade = st.selectbox("年級", ["1", "2", "3"])
+        with col1: sem = st.selectbox("學期", ["1", "2"], key='sem_val')
+        with col2: grade = st.selectbox("年級", ["1", "2", "3"], key='grade_val')
         
         if st.button("📥 載入/重置 表格", type="primary", use_container_width=True):
             with st.spinner("讀取中..."):
@@ -196,14 +220,12 @@ def main():
                 st.session_state['data'] = df
                 st.session_state['loaded'] = True
                 st.session_state['edit_index'] = None
-                # 重置表單狀態
-                st.session_state['form_data'] = {
-                    'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 
-                    'book2': '', 'vol2': '全', 'pub2': '', 'note': '', 'class_str': ''
-                }
-                # 重置班級設定
-                st.session_state['extra_classes'] = []
-                st.session_state['cb_state'] = {'reg': True, 'prac': False, 'coop': False}
+                st.session_state['active_classes'] = [] # 清空班級
+                # 預設勾選普通科
+                st.session_state['cb_reg'] = True
+                st.session_state['cb_prac'] = False
+                st.session_state['cb_coop'] = False
+                update_class_list_from_checkboxes() # 執行一次初始化班級
 
     if st.session_state.get('loaded'):
         
@@ -215,11 +237,9 @@ def main():
             st.subheader(header_text)
             
             if is_edit_mode:
-                if st.button("❌ 取消修改 (回新增模式)", type="secondary"):
+                if st.button("❌ 取消修改", type="secondary"):
                     st.session_state['edit_index'] = None
-                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
-                    st.session_state['extra_classes'] = []
-                    st.session_state['cb_state'] = {'reg': True, 'prac': False, 'coop': False}
+                    st.session_state['data']["勾選"] = False # 取消表格勾選
                     st.rerun()
 
             current_form = st.session_state['form_data']
@@ -251,47 +271,26 @@ def main():
             with bc3: input_vol2 = st.selectbox("冊次(2)", vol_opts, index=vol2_idx)
             with bc4: input_pub2 = st.text_input("出版社(2)", value=current_form['pub2'])
             
-            # --- 班級設定 (修復崩潰問題) ---
+            # --- 班級設定 (連動版) ---
             st.markdown("##### 適用班級")
-            st.caption("👇 1. 勾選基本盤")
+            st.caption("👇 勾選或取消，會自動增刪下方列表")
             
-            # 使用 callback 來更新 session state 中的 checkbox 狀態
-            def update_cb_reg(): st.session_state['cb_state']['reg'] = not st.session_state['cb_state']['reg']
-            def update_cb_prac(): st.session_state['cb_state']['prac'] = not st.session_state['cb_state']['prac']
-            def update_cb_coop(): st.session_state['cb_state']['coop'] = not st.session_state['cb_state']['coop']
-
             c1, c2, c3 = st.columns(3)
-            with c1: 
-                use_reg = st.checkbox("普通", value=st.session_state['cb_state']['reg'], on_change=update_cb_reg)
-            with c2: 
-                use_prac = st.checkbox("實技", value=st.session_state['cb_state']['prac'], on_change=update_cb_prac)
-            with c3: 
-                use_coop = st.checkbox("建教", value=st.session_state['cb_state']['coop'], on_change=update_cb_coop)
+            # 綁定 callback，當勾選改變時，直接修改 active_classes
+            with c1: st.checkbox("普通", key="cb_reg", on_change=update_class_list_from_checkboxes)
+            with c2: st.checkbox("實技", key="cb_prac", on_change=update_class_list_from_checkboxes)
+            with c3: st.checkbox("建教", key="cb_coop", on_change=update_class_list_from_checkboxes)
             
-            # 計算基本班級
-            base_classes = generate_class_list(dept, grade, st.session_state['cb_state']['reg'], st.session_state['cb_state']['prac'], st.session_state['cb_state']['coop'])
+            st.caption("👇 可直接點選下方框框加選其他班級")
+            all_possible = get_all_possible_classes(grade)
             
-            st.caption("👇 2. 點選加入其他班級")
-            all_opts = get_all_possible_classes(grade)
-            
-            # 使用 callback 更新 multiselect
-            def update_extras():
-                st.session_state['extra_classes'] = st.session_state['extra_classes_widget']
-
-            extras = st.multiselect(
-                "加選其他班級:",
-                options=all_opts,
-                default=st.session_state['extra_classes'],
-                key="extra_classes_widget",
-                on_change=update_extras
+            selected_classes = st.multiselect(
+                "最終班級列表:",
+                options=all_possible,
+                key="active_classes"  # 雙向綁定：Checkbox 改這裡，手動改這裡也會存
             )
             
-            # 合併結果
-            final_set = set(base_classes + st.session_state['extra_classes'])
-            final_class_str = ",".join(sorted(list(final_set)))
-            
-            input_class_str = st.text_input("最終班級字串", value=final_class_str)
-            
+            input_class_str = ",".join(selected_classes)
             input_note = st.text_input("備註", value=current_form['note'])
 
             # 按鈕
@@ -310,9 +309,6 @@ def main():
                     st.session_state['data'].at[idx, "勾選"] = False 
                     
                     st.session_state['edit_index'] = None
-                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
-                    st.session_state['cb_state'] = {'reg': True, 'prac': False, 'coop': False}
-                    st.session_state['extra_classes'] = []
                     st.success("更新成功！")
                     st.rerun()
             else:
@@ -328,15 +324,13 @@ def main():
                         "備註": input_note
                     }
                     st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
-                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
-                    # 新增後不重置班級設定，方便連續新增
                     st.success(f"已加入：{input_course}")
                     st.rerun()
 
         # --- 中央顯示區 ---
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 資料編輯器 (冊次加寬)
+        # 資料編輯器 (冊次加寬為 medium)
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -352,65 +346,55 @@ def main():
         )
 
         # --- 邏輯：單選互斥 與 資料載入 ---
-        current_checked_indices = edited_df[edited_df["勾選"] == True].index.tolist()
+        current_checked = edited_df[edited_df["勾選"] == True].index.tolist()
         
-        if len(current_checked_indices) > 0:
+        if len(current_checked) > 0:
             prev_idx = st.session_state.get('edit_index')
             
-            # 確保單選
-            if len(current_checked_indices) > 1:
-                new_selection = [i for i in current_checked_indices if i != prev_idx]
-                target_idx = new_selection[0] if new_selection else current_checked_indices[0]
+            # 策略：如果有多個勾選，取「不在舊清單」的那一個（即最新勾選的）
+            # 如果是第一次勾，就取第一個
+            target_idx = current_checked[0]
+            if len(current_checked) > 1:
+                # 找出新勾選的項目
+                new_ones = [i for i in current_checked if i != prev_idx]
+                if new_ones:
+                    target_idx = new_ones[0]
                 
-                # 更新 DataFrame (取消其他勾選)
+            # 如果目標索引變了，執行切換邏輯
+            if target_idx != prev_idx:
+                # 1. 確保 DataFrame 只有這一列是 True
                 st.session_state['data']["勾選"] = False
                 st.session_state['data'].at[target_idx, "勾選"] = True
                 
+                # 2. 更新編輯指標
                 st.session_state['edit_index'] = target_idx
-                should_load_form = True
-            
-            elif len(current_checked_indices) == 1:
-                target_idx = current_checked_indices[0]
-                if target_idx != prev_idx:
-                    st.session_state['edit_index'] = target_idx
-                    should_load_form = True
-                else:
-                    should_load_form = False
-            
-            # 載入資料到表單
-            if should_load_form:
-                row_data = st.session_state['data'].iloc[target_idx]
                 
-                # 1. 填入文字欄位
+                # 3. 載入資料到 Form
+                row_data = st.session_state['data'].iloc[target_idx]
                 st.session_state['form_data'] = {
                     'course': row_data["課程名稱"],
-                    'book1': row_data["教科書(優先1)"],
-                    'vol1': row_data["冊次(1)"],
-                    'pub1': row_data["出版社(1)"],
-                    'book2': row_data["教科書(優先2)"],
-                    'vol2': row_data["冊次(2)"],
-                    'pub2': row_data["出版社(2)"],
-                    'note': row_data["備註"],
-                    'class_str': str(row_data["適用班級"])
+                    'book1': row_data["教科書(優先1)"], 'vol1': row_data["冊次(1)"], 'pub1': row_data["出版社(1)"],
+                    'book2': row_data["教科書(優先2)"], 'vol2': row_data["冊次(2)"], 'pub2': row_data["出版社(2)"],
+                    'note': row_data["備註"]
                 }
                 
-                # 2. 處理班級：解析字串，填入 Multiselect
-                # 為了避免邏輯衝突，我們將「基本盤(Checkbox)」全歸零，
-                # 把所有的班級都視為「加選(Multiselect)」，這樣使用者可以自由刪減
+                # 4. 處理班級：解析字串 -> 填入 Multiselect
+                # 為了避免邏輯衝突，這裡不自動勾選 Checkbox，只填入列表供編輯
                 class_str = str(row_data["適用班級"])
                 class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-                
-                # 過濾有效班級
                 valid_classes = get_all_possible_classes(grade)
                 final_list = [c for c in class_list if c in valid_classes]
                 
-                st.session_state['cb_state'] = {'reg': False, 'prac': False, 'coop': False}
-                st.session_state['extra_classes'] = final_list
+                st.session_state['active_classes'] = final_list
+                # 重置 Checkbox 以免誤觸 callback (視需求而定，這裡選擇全關，讓 multiselect 主導)
+                st.session_state['cb_reg'] = False
+                st.session_state['cb_prac'] = False
+                st.session_state['cb_coop'] = False
                 
                 st.rerun()
         
         else:
-            # 沒勾選任何東西
+            # 如果全部取消勾選
             if st.session_state.get('edit_index') is not None:
                 st.session_state['edit_index'] = None
                 st.rerun()
