@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 import json
+import uuid
 
 # --- 全域設定 ---
 SPREADSHEET_NAME = "教科書填報" 
@@ -118,7 +119,7 @@ def load_data(dept, semester, grade):
                     "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
-                    "適用班級": s_row.get('適用班級', default_class), 
+                    "適用班級": s_row.get('適用班級', default_class),
                     "教科書(優先1)": s_row.get('教科書(優先1)', '') or s_row.get('教科書(1)', ''), 
                     "冊次(1)": s_row.get('冊次(1)', ''), 
                     "出版社(1)": s_row.get('出版社(1)', ''), 
@@ -133,33 +134,27 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 判斷是否為預設班級 (寬鬆比對)
-                # 這裡假設如果 History 有這一課，且「適用班級」包含了當前 Curriculum 的預設班級，就帶入
-                # 或者，最簡單的方式是：如果 History 有這門課，就帶入 (讓老師自己刪減班級)
-                # 為了避免帶入錯誤班級 (例如 A班的歷史課帶入 B班的設定)，我們還是做個基本檢查
-                
-                # 修正邏輯：如果 History 中有完全符合預設班級的，優先帶入
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
-                
                 if not exact_match.empty:
-                    target_hist = exact_match
+                    for _, h_row in exact_match.iterrows():
+                        display_rows.append({
+                            "勾選": False,
+                            "科別": dept, "年級": grade, "學期": semester,
+                            "課程類別": c_type, "課程名稱": c_name,
+                            "適用班級": default_class,
+                            "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
+                            "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
+                            "備註": h_row.get('備註', '')
+                        })
                 else:
-                    # 如果沒有完全符合的，就列出所有同名的課 (讓老師挑)
-                    target_hist = hist_matches
-
-                for _, h_row in target_hist.iterrows():
-                    # 如果是從 History 來的，優先使用 History 的班級，若無則用預設
-                    hist_class = h_row.get('適用班級', '')
-                    final_class = hist_class if hist_class else default_class
-                    
                     display_rows.append({
                         "勾選": False,
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
-                        "適用班級": final_class,
-                        "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
-                        "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
-                        "備註": h_row.get('備註', '')
+                        "適用班級": default_class,
+                        "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
+                        "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
+                        "備註": ""
                     })
             else:
                 display_rows.append({
@@ -259,7 +254,13 @@ def toggle_all_checkboxes():
     update_class_list_from_checkboxes()
 
 def on_editor_change():
-    edits = st.session_state["main_editor"]["edited_rows"]
+    """表格編輯/勾選變動時觸發"""
+    # 如果還沒有 key，初始化為 0
+    if 'editor_key_counter' not in st.session_state:
+        st.session_state['editor_key_counter'] = 0
+        
+    edits = st.session_state[f"main_editor_{st.session_state['editor_key_counter']}"]["edited_rows"]
+    
     target_idx = None
     for idx, changes in edits.items():
         if "勾選" in changes and changes["勾選"] is True:
@@ -314,12 +315,16 @@ def auto_load_data():
         st.session_state['cb_coop'] = False
         st.session_state['cb_all'] = False
         update_class_list_from_checkboxes()
+        
+        # 載入時也重置 editor key
+        st.session_state['editor_key_counter'] += 1
 
 # --- 7. 主程式 ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
+    # --- CSS 強力注入 ---
     st.markdown("""
         <style>
         html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
@@ -368,10 +373,12 @@ def main():
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
     if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
+    
+    # 用來強制重繪 editor 的 key
+    if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
     with st.sidebar:
         st.header("1. 填報設定")
-        # 更新科別清單，將「藝能科」改為「藝術科」
         dept_options = [
             "建築科", "機械科", "電機科", "製圖科", "室設科", 
             "國文科", "英文科", "數學科", "自然科", "社會科", 
@@ -401,6 +408,7 @@ def main():
                 if st.button("❌ 取消修改", type="secondary"):
                     st.session_state['edit_index'] = None
                     st.session_state['data']["勾選"] = False
+                    st.session_state['editor_key_counter'] += 1 # 強制刷新表格狀態
                     st.rerun()
 
             current_form = st.session_state['form_data']
@@ -471,8 +479,13 @@ def main():
                         st.session_state['data'].at[idx, "適用班級"] = input_class_str
                         st.session_state['data'].at[idx, "備註"] = input_note
                         
+                        st.session_state['data'].at[idx, "勾選"] = False 
                         st.session_state['edit_index'] = None
                         st.session_state['last_selected_row'] = None 
+                        
+                        # 關鍵：更新 counter，強制重繪 editor
+                        st.session_state['editor_key_counter'] += 1
+                        
                         st.success("更新成功！")
                         st.rerun()
             else:
@@ -491,6 +504,7 @@ def main():
                             "備註": input_note
                         }
                         st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
+                        st.session_state['editor_key_counter'] += 1 # 強制刷新
                         st.success(f"已加入：{input_course}")
                         st.rerun()
 
@@ -501,7 +515,8 @@ def main():
             num_rows="dynamic",
             use_container_width=True,
             height=600,
-            key="main_editor",
+            # 這裡使用動態 key，每次更新都會強制重繪
+            key=f"main_editor_{st.session_state['editor_key_counter']}",
             on_change=on_editor_change,
             column_config={
                 "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False),
@@ -532,12 +547,11 @@ def main():
         col_submit, _ = st.columns([1, 4])
         with col_submit:
             if st.button("💾 確認提交 (寫入資料庫)", type="primary", use_container_width=True):
-                final_df = st.session_state['data'].drop(columns=["勾選"])
-                if final_df.empty:
+                if st.session_state['data'].empty:
                     st.error("表格是空的")
                 else:
                     with st.spinner("寫入中..."):
-                        if save_submission(final_df):
+                        if save_submission(st.session_state['data']):
                             st.success("✅ 資料已成功提交！")
                             st.balloons()
 
