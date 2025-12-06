@@ -238,32 +238,41 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # --- CSS 注入：強制配色與版面優化 ---
+    # --- CSS 強制注入：背景全白、字體全黑 ---
     st.markdown("""
         <style>
-        /* 全域文字放大 */
-        html, body, [class*="css"] {
-            font-family: 'Segoe UI', sans-serif;
+        /* 強制整個表格區域背景為白色 */
+        div[data-testid="stDataEditor"] table {
+            background-color: #ffffff !important;
         }
         
-        /* 表格資料儲存格 - 強制黑字與換行 */
+        /* 表格資料儲存格 - 強制黑字、白底、換行 */
         div[data-testid="stDataEditor"] table td {
             font-size: 18px !important;
-            color: #000000 !important;      /* 強制黑色字體，避免淺色看不見 */
+            color: #000000 !important;      /* 強制純黑色字體 */
+            background-color: #ffffff !important; /* 強制白色背景 */
             white-space: pre-wrap !important; 
             word-wrap: break-word !important;
             vertical-align: top !important;
             height: auto !important;
             min-height: 60px !important;
             line-height: 1.6 !important;
+            border-bottom: 1px solid #e6e6e6 !important; /* 增加分隔線 */
         }
         
-        /* 表頭 - 深色背景白字，區隔明顯 */
+        /* 針對唯讀欄位 (disabled) 也要顯示黑色 */
+        div[data-testid="stDataEditor"] table td[data-disabled="true"] {
+            color: #000000 !important;
+            background-color: #ffffff !important;
+            opacity: 1 !important; /* 取消唯讀的淡化效果 */
+        }
+        
+        /* 表頭 */
         div[data-testid="stDataEditor"] table th {
             font-size: 18px !important;
             font-weight: bold !important;
-            background-color: #444444 !important;
-            color: #ffffff !important;
+            background-color: #f0f2f6 !important;
+            color: #000000 !important;
         }
         
         /* 隱藏 index */
@@ -409,7 +418,6 @@ def main():
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 修正：冊次欄寬改為 small，班級改為 medium (配合換行)
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -424,9 +432,7 @@ def main():
                 "學期": None,
                 "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目"], width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
-                # 教科書改為 medium
                 "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True),
-                # 冊次改為 small
                 "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
@@ -434,8 +440,7 @@ def main():
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                # 班級改為 medium
-                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), 
+                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True),
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             }
         )
