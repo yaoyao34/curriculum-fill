@@ -134,7 +134,9 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
+                
                 if not exact_match.empty:
                     target_rows = exact_match
                 else:
@@ -270,7 +272,6 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     suffixes = []
-    
     if dept in DEPT_SPECIFIC_CONFIG:
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
@@ -312,7 +313,6 @@ def on_multiselect_change():
     st.session_state['active_classes'] = st.session_state['class_multiselect']
 
 def on_editor_change():
-    """當表格勾選變動時觸發"""
     key = f"main_editor_{st.session_state['editor_key_counter']}"
     if key not in st.session_state: return
 
@@ -337,26 +337,36 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 關鍵修正：將班級字串解析並填入 active_classes
+        # 班級解析與 Checkbox 反推邏輯
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        
-        # 1. 取得標準班級清單 (該年級所有可能的班級)
         grade = st.session_state.get('grade_val')
+        dept = st.session_state.get('dept_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
-        
-        # 2. 保留所有原本的班級 (只要不為空)，並確保它們出現在選項中
-        # 這樣就算資料庫裡的班級寫得怪怪的，也會被帶入，不會消失
-        final_list = [c for c in class_list if c] 
+        final_list = [c for c in class_list if c in valid_classes] # 過濾無效班級
         
         st.session_state['active_classes'] = final_list
-        # 將資料庫的班級也加入 widget 的預設值中，確保它能顯示
-        st.session_state['class_multiselect'] = final_list 
+        
+        # 反推 Checkbox 狀態
+        # 邏輯：如果 final_list 包含了某學制的所有班級，就勾選該學制
+        # 這裡為了簡單且不干擾使用者操作，我們採取「如果包含該學制的任何一個班級，就勾選」的寬鬆邏輯，或者直接不勾選，讓使用者自己決定
+        # 為了體驗最好，我們檢查：如果 final_list 裡有包含「該科系」的「普通班」，就勾普通...以此類推
         
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
-        st.session_state['cb_all'] = False
+        
+        reg_classes = get_target_classes_for_dept(dept, grade, "普通科")
+        prac_classes = get_target_classes_for_dept(dept, grade, "實用技能班")
+        coop_classes = get_target_classes_for_dept(dept, grade, "建教班")
+        
+        # 檢查交集
+        if any(c in final_list for c in reg_classes): st.session_state['cb_reg'] = True
+        if any(c in final_list for c in prac_classes): st.session_state['cb_prac'] = True
+        if any(c in final_list for c in coop_classes): st.session_state['cb_coop'] = True
+        
+        # 全選連動
+        st.session_state['cb_all'] = st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']
     
     else:
         current_idx = st.session_state.get('edit_index')
@@ -466,12 +476,25 @@ def main():
             header_text = f"2. 修改第 {st.session_state['edit_index'] + 1} 列" if is_edit_mode else "2. 新增/插入課程"
             st.subheader(header_text)
             
+            # 新增刪除按鈕
             if is_edit_mode:
-                if st.button("❌ 取消修改", type="secondary"):
-                    st.session_state['edit_index'] = None
-                    st.session_state['data']["勾選"] = False
-                    st.session_state['editor_key_counter'] += 1
-                    st.rerun()
+                c_cancel, c_del = st.columns([1, 1])
+                with c_cancel:
+                    if st.button("❌ 取消", type="secondary"):
+                        st.session_state['edit_index'] = None
+                        st.session_state['data']["勾選"] = False
+                        st.session_state['editor_key_counter'] += 1
+                        st.rerun()
+                with c_del:
+                    if st.button("🗑️ 刪除此列", type="primary"):
+                        idx = st.session_state['edit_index']
+                        st.session_state['data'] = st.session_state['data'].drop(idx).reset_index(drop=True)
+                        st.session_state['edit_index'] = None
+                        st.session_state['active_classes'] = []
+                        st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
+                        st.session_state['editor_key_counter'] += 1
+                        st.success("已刪除！")
+                        st.rerun()
 
             current_form = st.session_state['form_data']
 
@@ -514,8 +537,7 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            # 關鍵修正：Multiselect 的選項必須包含「現有班級」，否則會報錯或顯示空白
-            # 這裡把 active_classes 也加入選項中，確保不會因為資料庫班級寫法不同而被過濾
+            # 關鍵修正：確保 default 值在 options 裡
             final_options = sorted(list(set(all_possible + st.session_state['active_classes'])))
             
             selected_classes = st.multiselect(
