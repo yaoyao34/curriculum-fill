@@ -436,41 +436,7 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    st.markdown("""
-        <style>
-        html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
-        div[data-testid="stDataEditor"] { background-color: #ffffff !important; }
-        div[data-testid="stDataEditor"] table td {
-            font-size: 18px !important;
-            color: #000000 !important;
-            background-color: #ffffff !important;
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-            vertical-align: top !important;
-            height: auto !important;
-            min-height: 60px !important;
-            line-height: 1.6 !important;
-            border-bottom: 1px solid #e0e0e0 !important;
-            opacity: 1 !important;
-        }
-        div[data-testid="stDataEditor"] table td[aria-disabled="true"],
-        div[data-testid="stDataEditor"] table td[data-disabled="true"] {
-            color: #000000 !important; 
-            -webkit-text-fill-color: #000000 !important;
-            background-color: #ffffff !important;
-            opacity: 1 !important;
-        }
-        div[data-testid="stDataEditor"] table th {
-            font-size: 18px !important;
-            font-weight: bold !important;
-            background-color: #333333 !important;
-            color: #ffffff !important;
-            border-bottom: 2px solid #000000 !important;
-        }
-        thead tr th:first-child { display: none }
-        tbody th { display: none }
-        </style>
-    """, unsafe_allow_html=True)
+   
 
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
@@ -682,3 +648,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
