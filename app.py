@@ -118,8 +118,7 @@ def load_data(dept, semester, grade):
                     "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
-                    # 調整順序：這裡只是字典，顯示順序在 st.data_editor 設定
-                    "適用班級": s_row.get('適用班級', default_class), # 移前
+                    "適用班級": s_row.get('適用班級', default_class), 
                     "教科書(優先1)": s_row.get('教科書(優先1)', '') or s_row.get('教科書(1)', ''), 
                     "冊次(1)": s_row.get('冊次(1)', ''), 
                     "出版社(1)": s_row.get('出版社(1)', ''), 
@@ -134,27 +133,33 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 判斷是否為預設班級 (寬鬆比對)
+                # 這裡假設如果 History 有這一課，且「適用班級」包含了當前 Curriculum 的預設班級，就帶入
+                # 或者，最簡單的方式是：如果 History 有這門課，就帶入 (讓老師自己刪減班級)
+                # 為了避免帶入錯誤班級 (例如 A班的歷史課帶入 B班的設定)，我們還是做個基本檢查
+                
+                # 修正邏輯：如果 History 中有完全符合預設班級的，優先帶入
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
+                
                 if not exact_match.empty:
-                    for _, h_row in exact_match.iterrows():
-                        display_rows.append({
-                            "勾選": False,
-                            "科別": dept, "年級": grade, "學期": semester,
-                            "課程類別": c_type, "課程名稱": c_name,
-                            "適用班級": default_class,
-                            "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
-                            "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
-                            "備註": h_row.get('備註', '')
-                        })
+                    target_hist = exact_match
                 else:
+                    # 如果沒有完全符合的，就列出所有同名的課 (讓老師挑)
+                    target_hist = hist_matches
+
+                for _, h_row in target_hist.iterrows():
+                    # 如果是從 History 來的，優先使用 History 的班級，若無則用預設
+                    hist_class = h_row.get('適用班級', '')
+                    final_class = hist_class if hist_class else default_class
+                    
                     display_rows.append({
                         "勾選": False,
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
-                        "適用班級": default_class,
-                        "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
-                        "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
-                        "備註": ""
+                        "適用班級": final_class,
+                        "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
+                        "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
+                        "備註": h_row.get('備註', '')
                     })
             else:
                 display_rows.append({
@@ -188,7 +193,6 @@ def save_submission(df_to_save):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data_list = []
     
-    # 補齊可能缺失的欄位
     for col in ["教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "適用班級", "備註"]:
         if col not in df_to_save.columns: df_to_save[col] = ""
 
@@ -367,10 +371,11 @@ def main():
 
     with st.sidebar:
         st.header("1. 填報設定")
+        # 更新科別清單，將「藝能科」改為「藝術科」
         dept_options = [
             "建築科", "機械科", "電機科", "製圖科", "室設科", 
             "國文科", "英文科", "數學科", "自然科", "社會科", 
-            "資訊科技", "體育科", "國防科", "藝能科", "健護科", "輔導科", "閩南語"
+            "資訊科技", "體育科", "國防科", "藝術科", "健護科", "輔導科", "閩南語"
         ]
         
         dept = st.selectbox("科別", dept_options, key='dept_val', on_change=auto_load_data)
@@ -505,6 +510,7 @@ def main():
                 "學期": None,
                 "課程類別": st.column_config.TextColumn("類別", width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
+                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), 
                 "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True), 
                 "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
@@ -513,14 +519,10 @@ def main():
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                # 調整順序：讓班級顯示在課程名稱後方 (在 data_editor 設定)
-                # 這裡透過順序來控制顯示，先把班級加進來
-                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), 
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             },
-            # 指定欄位顯示順序
             column_order=[
-                "勾選", "課程類別", "課程名稱", "適用班級", # 調整順序：班級移到這裡
+                "勾選", "課程類別", "課程名稱", "適用班級",
                 "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)",
                 "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)",
                 "備註"
@@ -530,12 +532,12 @@ def main():
         col_submit, _ = st.columns([1, 4])
         with col_submit:
             if st.button("💾 確認提交 (寫入資料庫)", type="primary", use_container_width=True):
-                # final_df = st.session_state['data'] # 不需要 drop 勾選了，因為根本沒有這個欄位
-                if st.session_state['data'].empty:
+                final_df = st.session_state['data'].drop(columns=["勾選"])
+                if final_df.empty:
                     st.error("表格是空的")
                 else:
                     with st.spinner("寫入中..."):
-                        if save_submission(st.session_state['data']):
+                        if save_submission(final_df):
                             st.success("✅ 資料已成功提交！")
                             st.balloons()
 
