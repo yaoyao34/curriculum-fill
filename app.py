@@ -46,7 +46,7 @@ def get_connection():
             return None
     return gspread.authorize(creds)
 
-# --- 2. 資料讀取 (核心修正：Curriculum 為主，History/Submission 為輔) ---
+# --- 2. 資料讀取 ---
 def load_data(dept, semester, grade):
     client = get_connection()
     if not client: return pd.DataFrame()
@@ -56,7 +56,6 @@ def load_data(dept, semester, grade):
         ws_hist = sh.worksheet(SHEET_HISTORY)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
         
-        # 輔助函式：讀取並處理重複標頭
         def get_df(ws):
             data = ws.get_all_values()
             if not data: return pd.DataFrame()
@@ -96,7 +95,6 @@ def load_data(dept, semester, grade):
         st.error(f"讀取錯誤: {e}")
         return pd.DataFrame()
 
-    # 1. 篩選課綱 (Curriculum) - 這是基準
     mask_curr = (df_curr['科別'] == dept) & (df_curr['學期'] == str(semester)) & (df_curr['年級'] == str(grade))
     target_courses = df_curr[mask_curr]
 
@@ -105,20 +103,17 @@ def load_data(dept, semester, grade):
 
     display_rows = []
     
-    # 2. 針對課綱中的每一門課，逐一查找資料
     for _, row in target_courses.iterrows():
         c_name = row['課程名稱']
         c_type = row['課程類別']
         default_class = row.get('預設適用班級', '') 
         
-        # A. 優先找 Submission (本學期是否已填報過)
         sub_matches = pd.DataFrame()
         if not df_sub.empty:
              mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
              sub_matches = df_sub[mask_sub]
 
         if not sub_matches.empty:
-            # 有提交過 -> 顯示所有提交紀錄 (以 Submission 為準)
             for _, s_row in sub_matches.iterrows():
                 display_rows.append({
                     "勾選": False,
@@ -136,18 +131,16 @@ def load_data(dept, semester, grade):
                     "備註": s_row.get('備註', '')
                 })
         else:
-            # B. 沒提交過 -> 找 History (歷史紀錄)
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 如果 History 有資料，嘗試找完全對應班級的
+                # 嘗試找完全對應班級的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 
                 # 如果有完全對應班級的，只顯示這些
                 if not exact_match.empty:
                     target_rows = exact_match
                 # 如果沒有完全對應的，但有同名課程 (例如以前是別班上的)，為了不漏掉，列出所有同名課程供參考
-                # (或者您可以選擇只列出第一筆，這裡保留所有以確保不漏)
                 else:
                     target_rows = hist_matches
 
@@ -166,7 +159,6 @@ def load_data(dept, semester, grade):
                         "備註": h_row.get('備註', '')
                     })
             else:
-                # C. 完全沒資料 (新課程) -> 顯示一筆空白列
                 display_rows.append({
                     "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
@@ -198,7 +190,6 @@ def save_submission(df_to_save):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data_list = []
     
-    # 補齊欄位
     for col in ["教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "適用班級", "備註"]:
         if col not in df_to_save.columns: df_to_save[col] = ""
 
@@ -350,13 +341,20 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
+        # 關鍵修正：將班級字串解析並正確填入
         class_str = str(row_data.get("適用班級", ""))
+        # 移除多餘空白並分割
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
+        
+        # 過濾確保是有效的班級選項 (避免選單沒有該選項而無法顯示)
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
+        # 更新 Multiselect 預設值
         st.session_state['active_classes'] = final_list
+        
+        # 重置 Checkbox (避免邏輯衝突，先全部取消讓 Multiselect 決定)
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
