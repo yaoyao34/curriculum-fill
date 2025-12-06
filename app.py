@@ -79,6 +79,7 @@ def load_data(dept, semester, grade):
         if not hist_matches.empty:
             for _, h_row in hist_matches.iterrows():
                 display_rows.append({
+                    "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
                     "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
@@ -87,6 +88,7 @@ def load_data(dept, semester, grade):
                 })
         else:
             display_rows.append({
+                "勾選": False,
                 "科別": dept, "年級": grade, "學期": semester,
                 "課程類別": c_type, "課程名稱": c_name,
                 "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
@@ -109,7 +111,7 @@ def save_submission(df_to_save):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
-        ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
+        ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次", "出版社", "字號", "教科書(2)", "冊次", "出版社", "字號", "適用班級", "備註"])
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data_list = []
@@ -180,6 +182,41 @@ def toggle_all_checkboxes():
     st.session_state['cb_coop'] = new_state
     update_class_list_from_checkboxes()
 
+def on_editor_change():
+    """表格編輯/勾選變動時觸發"""
+    edits = st.session_state["main_editor"]["edited_rows"]
+    
+    target_idx = None
+    for idx, changes in edits.items():
+        if "勾選" in changes and changes["勾選"] is True:
+            target_idx = int(idx)
+            break
+            
+    if target_idx is not None:
+        st.session_state['data']["勾選"] = False
+        st.session_state['data'].at[target_idx, "勾選"] = True
+        st.session_state['edit_index'] = target_idx
+        
+        row_data = st.session_state['data'].iloc[target_idx]
+        st.session_state['form_data'] = {
+            'course': row_data["課程名稱"],
+            'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
+            'book2': row_data.get("教科書(優先2)", ""), 'vol2': row_data.get("冊次(2)", ""), 'pub2': row_data.get("出版社(2)", ""), 'code2': row_data.get("審定字號(2)", ""),
+            'note': row_data.get("備註", "")
+        }
+        
+        class_str = str(row_data.get("適用班級", ""))
+        class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
+        grade = st.session_state.get('grade_val')
+        valid_classes = get_all_possible_classes(grade) if grade else []
+        final_list = [c for c in class_list if c in valid_classes]
+        
+        st.session_state['active_classes'] = final_list
+        st.session_state['cb_reg'] = False
+        st.session_state['cb_prac'] = False
+        st.session_state['cb_coop'] = False
+        st.session_state['cb_all'] = False
+
 def auto_load_data():
     dept = st.session_state.get('dept_val')
     sem = st.session_state.get('sem_val')
@@ -202,50 +239,45 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # --- CSS 強力注入：解決對比度與行高 ---
+    # --- CSS 強力注入 ---
     st.markdown("""
         <style>
-        /* 全域樣式 - 統一字型 */
-        html, body, [class*="css"] {
-            font-family: 'Segoe UI', sans-serif;
-        }
+        /* 全域文字放大 */
+        html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
         
         /* 1. 表格主體 - 強制白色背景 */
-        div[data-testid="stDataEditor"] {
-            background-color: #ffffff !important;
-        }
+        div[data-testid="stDataEditor"] { background-color: #ffffff !important; }
         
-        /* 2. 資料儲存格 (td) - 強制樣式 */
+        /* 2. 資料儲存格 (td) */
         div[data-testid="stDataEditor"] table td {
-            font-size: 18px !important;       /* 字體加大 */
-            color: #000000 !important;        /* 強制純黑字體 */
-            background-color: #ffffff !important; /* 強制純白背景 */
-            white-space: pre-wrap !important; /* 強制換行 */
+            font-size: 18px !important;
+            color: #000000 !important;
+            background-color: #ffffff !important;
+            white-space: pre-wrap !important;
             word-wrap: break-word !important;
-            vertical-align: top !important;   /* 內容置頂 */
-            height: auto !important;          /* 高度自適應 */
-            min-height: 60px !important;      /* 最小高度 */
+            vertical-align: top !important;
+            height: auto !important;
+            min-height: 60px !important;
             line-height: 1.6 !important;
             border-bottom: 1px solid #e0e0e0 !important;
-            opacity: 1 !important;            /* 取消透明度 */
+            opacity: 1 !important;
         }
         
-        /* 3. 針對 disabled (唯讀) 欄位的特別修復 */
-        /* Streamlit 預設會把 disabled 變灰，我們要強制改回來 */
+        /* 3. 針對 disabled (唯讀) 欄位 */
         div[data-testid="stDataEditor"] table td[aria-disabled="true"],
         div[data-testid="stDataEditor"] table td[data-disabled="true"] {
             color: #000000 !important; 
-            -webkit-text-fill-color: #000000 !important; /* 針對 Webkit 瀏覽器 */
+            -webkit-text-fill-color: #000000 !important;
             background-color: #ffffff !important;
             opacity: 1 !important;
         }
         
-        /* 4. 表頭 (th) - 深色顯眼 */
+        /* 4. 表頭 (th) */
         div[data-testid="stDataEditor"] table th {
             font-size: 18px !important;
             font-weight: bold !important;
-            background-color: #333333 !important; /* 深灰背景 */
-            color: #ffffff !important;             /* 白字 */
+            background-color: #333333 !important;
+            color: #ffffff !important;
             border-bottom: 2px solid #000000 !important;
         }
         
@@ -278,7 +310,6 @@ def main():
         
         dept = st.selectbox("科別", dept_options, key='dept_val', on_change=auto_load_data)
         col1, col2 = st.columns(2)
-        # 增加 寒、暑 選項
         with col1: sem = st.selectbox("學期", ["1", "2", "寒", "暑"], key='sem_val', on_change=auto_load_data)
         with col2: grade = st.selectbox("年級", ["1", "2", "3"], key='grade_val', on_change=auto_load_data)
         
@@ -371,7 +402,7 @@ def main():
                         st.session_state['data'].at[idx, "備註"] = input_note
                         
                         st.session_state['edit_index'] = None
-                        st.session_state['last_selected_row'] = None # 重置選擇狀態
+                        st.session_state['last_selected_row'] = None 
                         st.success("更新成功！")
                         st.rerun()
             else:
@@ -380,6 +411,7 @@ def main():
                         st.error("⚠️ 書名和出版社為必填！")
                     else:
                         new_row = {
+                            "勾選": False,
                             "科別": dept, "年級": grade, "學期": sem,
                             "課程類別": "部定必修", 
                             "課程名稱": input_course,
@@ -394,22 +426,22 @@ def main():
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 關鍵修改：移除「勾選」欄，改用 on_select="rerun" 實現點選載入
-        event = st.data_editor(
+        # 修正：所有欄位改為 TextColumn 且 disabled=True (唯讀)
+        # 這樣才能套用 CSS 顏色設定，因為 Selectbox 在 disabled 狀態下樣式很難蓋過
+        edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
             use_container_width=True,
             height=600,
             key="main_editor",
-            on_change=None, # 移除舊的 callback
-            selection_mode="single-row", # 開啟單列點選模式
-            on_select="rerun",           # 點選後自動重跑以更新側邊欄
+            on_change=on_editor_change,
             column_config={
+                "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False),
                 "科別": None, 
                 "年級": None, 
                 "學期": None,
-                # 增加「校定課程」選項
-                "課程類別": st.column_config.SelectboxColumn("類別", options=["部定必修", "校訂必修", "校訂選修", "實習科目", "一般科目", "校定課程"], width="small", disabled=True),
+                # 全部改為 TextColumn 並 disabled，以配合 CSS 強制顯示黑色
+                "課程類別": st.column_config.TextColumn("類別", width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
                 "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True), 
                 "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
@@ -423,44 +455,6 @@ def main():
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             }
         )
-
-        # 處理點選事件 (Row Selection Logic)
-        if event.selection and event.selection.rows:
-            target_idx = event.selection.rows[0]
-            
-            # 檢查是否選擇了新的一行 (避免重複重新整理)
-            if st.session_state['last_selected_row'] != target_idx:
-                st.session_state['edit_index'] = target_idx
-                st.session_state['last_selected_row'] = target_idx
-                
-                # 載入資料到側邊欄
-                row_data = st.session_state['data'].iloc[target_idx]
-                st.session_state['form_data'] = {
-                    'course': row_data["課程名稱"],
-                    'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
-                    'book2': row_data.get("教科書(優先2)", ""), 'vol2': row_data.get("冊次(2)", ""), 'pub2': row_data.get("出版社(2)", ""), 'code2': row_data.get("審定字號(2)", ""),
-                    'note': row_data.get("備註", "")
-                }
-                
-                class_str = str(row_data.get("適用班級", ""))
-                class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-                grade = st.session_state.get('grade_val')
-                valid_classes = get_all_possible_classes(grade) if grade else []
-                final_list = [c for c in class_list if c in valid_classes]
-                
-                st.session_state['active_classes'] = final_list
-                st.session_state['cb_reg'] = False
-                st.session_state['cb_prac'] = False
-                st.session_state['cb_coop'] = False
-                st.session_state['cb_all'] = False
-                
-                st.rerun() # 強制刷新以更新側邊欄顯示
-        else:
-            # 如果取消選擇 (點擊空白處)
-            if st.session_state['edit_index'] is not None:
-                st.session_state['edit_index'] = None
-                st.session_state['last_selected_row'] = None
-                st.rerun()
 
         col_submit, _ = st.columns([1, 4])
         with col_submit:
