@@ -134,7 +134,6 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 if not exact_match.empty:
                     target_rows = exact_match
@@ -283,7 +282,8 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    current_list = list(st.session_state.get('active_classes', []))
+    # 關鍵修正：必須從 'class_multiselect' 取目前的值，因為它是 Widget 的 key
+    current_list = list(st.session_state.get('class_multiselect', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
@@ -295,8 +295,11 @@ def update_class_list_from_checkboxes():
             for c in target_classes:
                 if c in current_list: current_list.remove(c)
     
-    st.session_state['active_classes'] = sorted(list(set(current_list)))
-    
+    # 關鍵修正：同時更新 active_classes 和 Widget 的 key (class_multiselect)
+    final_list = sorted(list(set(current_list)))
+    st.session_state['active_classes'] = final_list
+    st.session_state['class_multiselect'] = final_list 
+
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -338,17 +341,34 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
+        # 關鍵修正：將班級字串解析並正確填入 active_classes 和 class_multiselect
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
+        
         grade = st.session_state.get('grade_val')
+        dept = st.session_state.get('dept_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
+        # 這裡兩個都要更新，這是解決問題的關鍵！
         st.session_state['active_classes'] = final_list
+        st.session_state['class_multiselect'] = final_list
+        
+        # 反推 Checkbox 狀態
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
-        st.session_state['cb_all'] = False
+        
+        reg_targets = get_target_classes_for_dept(dept, grade, "普通科")
+        prac_targets = get_target_classes_for_dept(dept, grade, "實用技能班")
+        coop_targets = get_target_classes_for_dept(dept, grade, "建教班")
+        
+        # 寬鬆判斷：只要有交集就勾選
+        if set(final_list) & set(reg_targets): st.session_state['cb_reg'] = True
+        if set(final_list) & set(prac_targets): st.session_state['cb_prac'] = True
+        if set(final_list) & set(coop_targets): st.session_state['cb_coop'] = True
+        
+        st.session_state['cb_all'] = (st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop'])
     
     else:
         current_idx = st.session_state.get('edit_index')
@@ -368,10 +388,18 @@ def auto_load_data():
         st.session_state['loaded'] = True
         st.session_state['edit_index'] = None
         st.session_state['active_classes'] = []
-        st.session_state['cb_reg'] = True
-        st.session_state['cb_prac'] = False
-        st.session_state['cb_coop'] = False
-        st.session_state['cb_all'] = False
+        
+        if dept not in DEPT_SPECIFIC_CONFIG:
+            st.session_state['cb_reg'] = True
+            st.session_state['cb_prac'] = True
+            st.session_state['cb_coop'] = True
+            st.session_state['cb_all'] = True
+        else:
+            st.session_state['cb_reg'] = True
+            st.session_state['cb_prac'] = False
+            st.session_state['cb_coop'] = False
+            st.session_state['cb_all'] = False
+            
         update_class_list_from_checkboxes()
         st.session_state['editor_key_counter'] += 1
 
@@ -506,7 +534,7 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            # 關鍵修正：確保 default 值有效 (解決 StreamlitAPIException)
+            # 防呆：確保 default 值有效 (解決 API Exception)
             valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
             st.session_state['active_classes'] = valid_active
             
