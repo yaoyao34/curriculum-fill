@@ -119,7 +119,6 @@ def load_data(dept, semester, grade):
                     "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
-                    # 這裡先暫存班級，顯示順序由 data_editor column_order 控制
                     "適用班級": s_row.get('適用班級', default_class),
                     "教科書(優先1)": s_row.get('教科書(優先1)', '') or s_row.get('教科書(1)', ''), 
                     "冊次(1)": s_row.get('冊次(1)', ''), 
@@ -283,7 +282,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    current_list = list(st.session_state['active_classes'])
+    current_list = list(st.session_state.get('active_classes', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
@@ -326,7 +325,6 @@ def on_editor_change():
             break
             
     if target_idx is not None:
-        # 單選互斥
         st.session_state['data']["勾選"] = False
         st.session_state['data'].at[target_idx, "勾選"] = True
         st.session_state['edit_index'] = target_idx
@@ -339,20 +337,22 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 關鍵修正：將班級字串解析並填入 active_classes 和 class_multiselect
+        # 關鍵修正：將班級字串解析並填入 active_classes
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
-        # 過濾確保是有效的班級選項
+        # 1. 取得標準班級清單 (該年級所有可能的班級)
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
-        final_list = [c for c in class_list if c in valid_classes]
         
-        # 更新 Multiselect 預設值 (確保左側選單同步)
+        # 2. 保留所有原本的班級 (只要不為空)，並確保它們出現在選項中
+        # 這樣就算資料庫裡的班級寫得怪怪的，也會被帶入，不會消失
+        final_list = [c for c in class_list if c] 
+        
         st.session_state['active_classes'] = final_list
-        st.session_state['class_multiselect'] = final_list
+        # 將資料庫的班級也加入 widget 的預設值中，確保它能顯示
+        st.session_state['class_multiselect'] = final_list 
         
-        # 重置 Checkbox (避免邏輯衝突，先全部取消)
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
@@ -514,9 +514,13 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
+            # 關鍵修正：Multiselect 的選項必須包含「現有班級」，否則會報錯或顯示空白
+            # 這裡把 active_classes 也加入選項中，確保不會因為資料庫班級寫法不同而被過濾
+            final_options = sorted(list(set(all_possible + st.session_state['active_classes'])))
+            
             selected_classes = st.multiselect(
                 "最終班級列表:",
-                options=all_possible,
+                options=final_options,
                 default=st.session_state['active_classes'],
                 key="class_multiselect",
                 on_change=on_multiselect_change
@@ -573,7 +577,6 @@ def main():
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 關鍵修改：欄位順序調整，「適用班級」移到「課程名稱」後面
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -600,7 +603,7 @@ def main():
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             },
             column_order=[
-                "勾選", "課程類別", "課程名稱", "適用班級", # 班級已移至此
+                "勾選", "課程類別", "課程名稱", "適用班級",
                 "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)",
                 "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)",
                 "備註"
