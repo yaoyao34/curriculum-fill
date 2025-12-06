@@ -282,32 +282,24 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    # 這裡很關鍵：我們必須基於「目前已經選了什麼」來增刪，而不是全部重來
-    current_list = list(st.session_state.get('active_classes', []))
+    # 關鍵修正：必須從 'class_multiselect' 取目前的值，因為它是 Widget 的 key
+    current_list = list(st.session_state.get('class_multiselect', []))
     
-    # 針對三個 Checkbox 進行邏輯判斷
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
-        
-        # 取得該科別、該學制的班級列表 (例如：建築科+普通科 -> 一建築)
         target_classes = get_target_classes_for_dept(dept, grade, sys_name)
-        
         if is_checked:
-            # 如果勾選了，就把該學制的班級「加進去」(如果還沒在裡面)
             for c in target_classes:
-                if c not in current_list:
-                    current_list.append(c)
+                if c not in current_list: current_list.append(c)
         else:
-            # 如果取消勾選，就把該學制的班級「移出去」
             for c in target_classes:
-                if c in current_list:
-                    current_list.remove(c)
+                if c in current_list: current_list.remove(c)
     
-    # 排序並去重，寫回 active_classes
+    # 關鍵修正：同時更新 active_classes 和 Widget 的 key (class_multiselect)
     final_list = sorted(list(set(current_list)))
     st.session_state['active_classes'] = final_list
-    
-    # 全選按鈕連動
+    st.session_state['class_multiselect'] = final_list 
+
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -349,22 +341,20 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # --- 關鍵修正區：正確解析並填入 active_classes ---
+        # 關鍵修正：將班級字串解析並正確填入 active_classes 和 class_multiselect
         class_str = str(row_data.get("適用班級", ""))
-        # 1. 切割字串
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
-        # 2. 過濾有效班級 (確保選項存在)
         grade = st.session_state.get('grade_val')
-        dept = st.session_state.get('dept_val') # 需要科別來反推 checkbox
+        dept = st.session_state.get('dept_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
-        # 3. 填入 active_classes
+        # 這裡兩個都要更新，這是解決問題的關鍵！
         st.session_state['active_classes'] = final_list
+        st.session_state['class_multiselect'] = final_list
         
-        # 4. 反推 Checkbox 狀態 (讓介面同步)
-        # 邏輯：如果 final_list 包含了某學制的班級，就勾選該學制
+        # 反推 Checkbox 狀態
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
@@ -373,7 +363,7 @@ def on_editor_change():
         prac_targets = get_target_classes_for_dept(dept, grade, "實用技能班")
         coop_targets = get_target_classes_for_dept(dept, grade, "建教班")
         
-        # 如果有交集，就勾選
+        # 寬鬆判斷：只要有交集就勾選
         if set(final_list) & set(reg_targets): st.session_state['cb_reg'] = True
         if set(final_list) & set(prac_targets): st.session_state['cb_prac'] = True
         if set(final_list) & set(coop_targets): st.session_state['cb_coop'] = True
@@ -544,7 +534,7 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            # 確保 default 值有效 (解決 StreamlitAPIException)
+            # 防呆：確保 default 值有效 (解決 API Exception)
             valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
             st.session_state['active_classes'] = valid_active
             
