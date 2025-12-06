@@ -45,24 +45,36 @@ def get_connection():
             return None
     return gspread.authorize(creds)
 
-# --- 2. 資料讀取 ---
+# --- 2. 資料讀取 (核心修正：以 Curriculum 為主，History 為輔) ---
 def load_data(dept, semester, grade):
     client = get_connection()
     if not client: return pd.DataFrame()
     try:
         sh = client.open(SPREADSHEET_NAME)
+        # 讀取三個分頁
         ws_curr = sh.worksheet(SHEET_CURRICULUM)
         ws_hist = sh.worksheet(SHEET_HISTORY)
+        ws_sub = sh.worksheet(SHEET_SUBMISSION) # 讀取提交紀錄
+        
         df_curr = pd.DataFrame(ws_curr.get_all_records())
         df_hist = pd.DataFrame(ws_hist.get_all_records())
-        for df in [df_curr, df_hist]:
+        df_sub = pd.DataFrame(ws_sub.get_all_records())
+        
+        # 轉型避免錯誤
+        for df in [df_curr, df_hist, df_sub]:
             if not df.empty:
-                df['年級'] = df['年級'].astype(str)
-                df['學期'] = df['學期'].astype(str)
+                # 確保欄位存在再轉型，避免報錯
+                if '年級' in df.columns: df['年級'] = df['年級'].astype(str)
+                if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
+                # 確保所有需要的欄位都存在，若無則補空值
+                for col in ['教科書(優先1)', '冊次(1)', '出版社(1)', '審定字號(1)', '教科書(優先2)', '冊次(2)', '出版社(2)', '審定字號(2)', '備註', '適用班級']:
+                    if col not in df.columns: df[col] = ""
+
     except Exception as e:
         st.error(f"讀取錯誤: {e}")
         return pd.DataFrame()
 
+    # 1. 篩選課綱 (Curriculum) - 這是基準，一定要有這些課
     mask_curr = (df_curr['科別'] == dept) & (df_curr['學期'] == semester) & (df_curr['年級'] == grade)
     target_courses = df_curr[mask_curr]
 
@@ -70,31 +82,56 @@ def load_data(dept, semester, grade):
         return pd.DataFrame()
 
     display_rows = []
+    
+    # 2. 針對每一門「課綱」中的課，去查找資料
     for _, row in target_courses.iterrows():
         c_name = row['課程名稱']
         c_type = row['課程類別']
-        default_class = row.get('預設適用班級', '')
-        hist_matches = df_hist[df_hist['課程名稱'] == c_name]
+        default_class = row.get('預設適用班級', '') # Curriculum 預設班級
 
-        if not hist_matches.empty:
-            for _, h_row in hist_matches.iterrows():
+        # 優先級 1: 檢查 Submission (本學期是否已填報過)
+        # 邏輯：如果這學期已經有人送出過這門課的資料，就顯示最後一次送出的內容
+        # (這裡假設 Submission 有 科別, 年級, 學期, 課程名稱)
+        sub_matches = pd.DataFrame()
+        if not df_sub.empty:
+             mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == semester) & (df_sub['年級'] == grade) & (df_sub['課程名稱'] == c_name)
+             sub_matches = df_sub[mask_sub]
+
+        if not sub_matches.empty:
+            # 如果有提交紀錄，使用提交紀錄 (可能有多筆，全部列出)
+            for _, s_row in sub_matches.iterrows():
                 display_rows.append({
-                    "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
-                    "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
-                    "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
-                    "適用班級": h_row.get('適用班級', default_class), "備註": h_row.get('備註', '')
+                    "教科書(優先1)": s_row.get('教科書(1)', ''), "冊次(1)": s_row.get('冊次(1)', ''), "出版社(1)": s_row.get('出版社(1)', ''), "審定字號(1)": s_row.get('字號(1)', ''), # 注意 Submission 欄位名稱可能不同
+                    "教科書(優先2)": s_row.get('教科書(2)', ''), "冊次(2)": s_row.get('冊次(2)', ''), "出版社(2)": s_row.get('出版社(2)', ''), "審定字號(2)": s_row.get('字號(2)', ''),
+                    "適用班級": s_row.get('適用班級', default_class), "備註": s_row.get('備註', '')
                 })
         else:
-            display_rows.append({
-                "勾選": False,
-                "科別": dept, "年級": grade, "學期": semester,
-                "課程類別": c_type, "課程名稱": c_name,
-                "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
-                "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
-                "適用班級": default_class, "備註": ""
-            })
+            # 優先級 2: 檢查 History (是否有歷史資料)
+            # 注意：History 通常只對應「課程名稱」，不一定對應年級/學期 (因為可能換年級開)
+            hist_matches = df_hist[df_hist['課程名稱'] == c_name]
+
+            if not hist_matches.empty:
+                # 如果有歷史資料，全部列出 (例如測量實習有兩本)
+                for _, h_row in hist_matches.iterrows():
+                    display_rows.append({
+                        "科別": dept, "年級": grade, "學期": semester,
+                        "課程類別": c_type, "課程名稱": c_name,
+                        "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
+                        "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
+                        "適用班級": h_row.get('適用班級', default_class), "備註": h_row.get('備註', '')
+                    })
+            else:
+                # 優先級 3: 完全沒資料，顯示空白列 (這就是修正的關鍵！)
+                display_rows.append({
+                    "科別": dept, "年級": grade, "學期": semester,
+                    "課程類別": c_type, "課程名稱": c_name,
+                    "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
+                    "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
+                    "適用班級": default_class, "備註": ""
+                })
+
     return pd.DataFrame(display_rows)
 
 # --- 3. 取得課程列表 ---
@@ -111,15 +148,15 @@ def save_submission(df_to_save):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
-        ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次", "出版社", "字號", "教科書(2)", "冊次", "出版社", "字號", "適用班級", "備註"])
+        ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data_list = []
     
-    expected_cols = ["科別", "年級", "學期", "課程名稱", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "適用班級", "備註"]
-    for col in expected_cols:
-        if col not in df_to_save.columns: df_to_save[col] = ""
-
+    # 刪除舊的同科同班資料 (避免重複堆疊) - 選擇性功能
+    # 目前邏輯是 Append (追加)，如果您希望是「覆蓋」，需要先讀取再刪除。
+    # 這裡維持追加模式，但建議定期清理或在 load_data 時過濾最新。
+    
     for _, row in df_to_save.iterrows():
         data_list.append([
             timestamp, 
@@ -242,13 +279,9 @@ def main():
     # --- CSS 強力注入 ---
     st.markdown("""
         <style>
-        /* 全域文字放大 */
         html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
-        
-        /* 1. 表格主體 - 強制白色背景 */
         div[data-testid="stDataEditor"] { background-color: #ffffff !important; }
         
-        /* 2. 資料儲存格 (td) */
         div[data-testid="stDataEditor"] table td {
             font-size: 18px !important;
             color: #000000 !important;
@@ -263,7 +296,6 @@ def main():
             opacity: 1 !important;
         }
         
-        /* 3. 針對 disabled (唯讀) 欄位 */
         div[data-testid="stDataEditor"] table td[aria-disabled="true"],
         div[data-testid="stDataEditor"] table td[data-disabled="true"] {
             color: #000000 !important; 
@@ -272,7 +304,6 @@ def main():
             opacity: 1 !important;
         }
         
-        /* 4. 表頭 (th) */
         div[data-testid="stDataEditor"] table th {
             font-size: 18px !important;
             font-weight: bold !important;
@@ -281,7 +312,6 @@ def main():
             border-bottom: 2px solid #000000 !important;
         }
         
-        /* 5. 隱藏 index */
         thead tr th:first-child { display: none }
         tbody th { display: none }
         </style>
@@ -330,7 +360,7 @@ def main():
             if is_edit_mode:
                 if st.button("❌ 取消修改 (回新增模式)", type="secondary"):
                     st.session_state['edit_index'] = None
-                    st.session_state['last_selected_row'] = None
+                    st.session_state['data']["勾選"] = False
                     st.rerun()
 
             current_form = st.session_state['form_data']
@@ -400,9 +430,8 @@ def main():
                         st.session_state['data'].at[idx, "審定字號(2)"] = input_code2
                         st.session_state['data'].at[idx, "適用班級"] = input_class_str
                         st.session_state['data'].at[idx, "備註"] = input_note
-                        
+                        st.session_state['data'].at[idx, "勾選"] = False 
                         st.session_state['edit_index'] = None
-                        st.session_state['last_selected_row'] = None 
                         st.success("更新成功！")
                         st.rerun()
             else:
@@ -426,8 +455,6 @@ def main():
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 修正：所有欄位改為 TextColumn 且 disabled=True (唯讀)
-        # 這樣才能套用 CSS 顏色設定，因為 Selectbox 在 disabled 狀態下樣式很難蓋過
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -440,7 +467,6 @@ def main():
                 "科別": None, 
                 "年級": None, 
                 "學期": None,
-                # 全部改為 TextColumn 並 disabled，以配合 CSS 強制顯示黑色
                 "課程類別": st.column_config.TextColumn("類別", width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
                 "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True), 
@@ -459,7 +485,6 @@ def main():
         col_submit, _ = st.columns([1, 4])
         with col_submit:
             if st.button("💾 確認提交 (寫入資料庫)", type="primary", use_container_width=True):
-                # final_df = st.session_state['data'] # 不需要 drop 勾選了，因為根本沒有這個欄位
                 if st.session_state['data'].empty:
                     st.error("表格是空的")
                 else:
