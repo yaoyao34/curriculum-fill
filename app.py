@@ -284,8 +284,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    # 這裡必須讀取 class_multiselect 來確保同步
-    current_list = list(st.session_state.get('class_multiselect', []))
+    current_list = list(st.session_state.get('active_classes', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
@@ -297,11 +296,13 @@ def update_class_list_from_checkboxes():
             for c in target_classes:
                 if c in current_list: current_list.remove(c)
     
-    # 關鍵修正：更新 active_classes 並直接更新 widget key
-    new_list = sorted(list(set(current_list)))
-    st.session_state['active_classes'] = new_list
-    st.session_state['class_multiselect'] = new_list  # 強制同步 Widget
+    # 更新前也做一次過濾，確保只包含當前年級的有效班級 (防止殘留)
+    all_valid = get_all_possible_classes(grade)
+    final_list = sorted(list(set(c for c in current_list if c in all_valid)))
     
+    st.session_state['active_classes'] = final_list
+    st.session_state['class_multiselect'] = final_list # 同步 Widget
+
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -343,18 +344,13 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 關鍵修正：將班級字串解析並正確填入
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
-        # 關鍵：同時更新變數與 Widget Key
         st.session_state['active_classes'] = final_list
-        st.session_state['class_multiselect'] = final_list 
-        
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
@@ -378,23 +374,10 @@ def auto_load_data():
         st.session_state['loaded'] = True
         st.session_state['edit_index'] = None
         st.session_state['active_classes'] = []
-        
-        # 預設：根據科別自動勾選學制
-        # 判斷是否為專業科系
-        if dept in DEPT_SPECIFIC_CONFIG:
-            # 專業科系：預設勾選普通/實技/建教 (視該科有無)
-            # 這裡簡化為預設全勾，讓 update_class_list 去過濾
-            st.session_state['cb_reg'] = True
-            st.session_state['cb_prac'] = True
-            st.session_state['cb_coop'] = True
-            st.session_state['cb_all'] = True
-        else:
-            # 共同科目：預設全勾 (全校)
-            st.session_state['cb_reg'] = True
-            st.session_state['cb_prac'] = True
-            st.session_state['cb_coop'] = True
-            st.session_state['cb_all'] = True
-            
+        st.session_state['cb_reg'] = True
+        st.session_state['cb_prac'] = False
+        st.session_state['cb_coop'] = False
+        st.session_state['cb_all'] = False
         update_class_list_from_checkboxes()
         st.session_state['editor_key_counter'] += 1
 
@@ -527,9 +510,13 @@ def main():
             with c3: st.checkbox("建教", key="cb_coop", on_change=update_class_list_from_checkboxes)
             
             st.caption("👇 點選加入其他班級")
-            all_possible = get_all_possible_classes(grade)
             
-            # 使用 key 和 default 來做雙向綁定
+            # 防呆：確保 active_classes 裡面的內容都存在於 options
+            # 這是解決切換年級時報錯的關鍵
+            all_possible = get_all_possible_classes(grade)
+            current_valid_classes = [c for c in st.session_state['active_classes'] if c in all_possible]
+            st.session_state['active_classes'] = current_valid_classes
+            
             selected_classes = st.multiselect(
                 "最終班級列表:",
                 options=all_possible,
