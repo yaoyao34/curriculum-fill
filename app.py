@@ -114,8 +114,6 @@ def load_data(dept, semester, grade):
              sub_matches = df_sub[mask_sub]
 
         if not sub_matches.empty:
-            # 優先顯示 Submission (取最新的)
-            # 這裡簡單列出所有，後續在報表階段會去重
             for _, s_row in sub_matches.iterrows():
                 display_rows.append({
                     "勾選": False,
@@ -176,7 +174,6 @@ def get_course_list():
 
 # --- 4. 存檔 (單筆寫入) ---
 def save_single_row(row_data):
-    """將單筆資料寫入 Google Sheets"""
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
     try:
@@ -187,7 +184,6 @@ def save_single_row(row_data):
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # 準備資料
     row_list = [
         timestamp, 
         row_data['科別'], row_data['年級'], row_data['學期'], row_data['課程名稱'],
@@ -199,7 +195,7 @@ def save_single_row(row_data):
     ws_sub.append_row(row_list)
     return True
 
-# --- 5. 產生 HTML 報表 (全科別全學期) ---
+# --- 5. 產生 HTML 報表 ---
 def create_full_report(dept):
     client = get_connection()
     try:
@@ -213,15 +209,10 @@ def create_full_report(dept):
     if df.empty:
         return f"<h1>{dept} 尚無提交資料</h1>"
         
-    # 資料前處理與去重
     df['填報時間'] = pd.to_datetime(df['填報時間'])
-    # 針對同一門課 (年級, 學期, 課程名稱)，只取時間最晚的那一筆
-    # 這裡加入 '適用班級' 作為唯一性判斷，避免不同班級的同名課程被刪掉
-    # 但如果目的是「更新」，則應該視為同一筆。這裡假設使用者會針對同一課程多次提交來修正。
     df = df.sort_values(by='填報時間')
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱'], keep='last')
     
-    # 篩選科別
     df = df[df['科別'] == dept]
     
     html = f"""
@@ -245,7 +236,6 @@ def create_full_report(dept):
         <p style="text-align:center;">列印時間：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
     """
     
-    # 分學期顯示 (1, 2)
     for sem in ['1', '2']:
         html += f"<h2>第 {sem} 學期</h2>"
         sem_df = df[df['學期'] == sem]
@@ -253,7 +243,6 @@ def create_full_report(dept):
         if sem_df.empty:
             html += "<p>尚無資料</p>"
         else:
-            # 分年級顯示
             for g in sorted(sem_df['年級'].unique()):
                 grade_df = sem_df[sem_df['年級'] == str(g)]
                 if not grade_df.empty:
@@ -275,14 +264,12 @@ def create_full_report(dept):
                     """
                     for _, row in grade_df.iterrows():
                         book2_info = ""
-                        # 檢查是否有第二本書 (相容不同欄位名稱)
                         b2 = row.get('教科書(2)') or row.get('教科書(優先2)')
                         if b2:
                             v2 = row.get('冊次(2)', '')
                             p2 = row.get('出版社(2)', '')
                             book2_info = f"<br><span style='color:blue; font-size:0.9em'>(2) {b2} / {v2} / {p2}</span>"
                         
-                        # 相容欄位名稱
                         b1 = row.get('教科書(1)') or row.get('教科書(優先1)', '')
                         v1 = row.get('冊次(1)', '')
                         p1 = row.get('出版社(1)', '')
@@ -300,9 +287,6 @@ def create_full_report(dept):
                             </tr>
                         """
                     html += "</tbody></table>"
-        
-        # 學期之間換頁 (選擇性)
-        # html += '<div class="page-break"></div>'
 
     html += """
         <div class="footer">
@@ -369,6 +353,7 @@ def on_multiselect_change():
     st.session_state['active_classes'] = st.session_state['class_multiselect']
 
 def on_editor_change():
+    """當表格勾選變動時觸發"""
     key = f"main_editor_{st.session_state['editor_key_counter']}"
     if key not in st.session_state: return
 
@@ -393,18 +378,34 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
+        # 關鍵修正：將班級字串解析並正確填入 active_classes
         class_str = str(row_data.get("適用班級", ""))
+        # 移除多餘空白並分割
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
-        grade = st.session_state.get('grade_val')
-        valid_classes = get_all_possible_classes(grade) if grade else []
-        final_list = [c for c in class_list if c in valid_classes]
+        # 這裡不進行 valid_classes 過濾，而是將這些班級也加入選項中
+        # 確保資料庫裡的班級一定會顯示，即使它不在標準清單裡
+        final_list = class_list
         
         st.session_state['active_classes'] = final_list
+        
+        # 反推 Checkbox 狀態 (僅供參考，不強制過濾)
+        grade = st.session_state.get('grade_val')
+        dept = st.session_state.get('dept_val')
+        
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
-        st.session_state['cb_all'] = False
+        
+        reg_targets = get_target_classes_for_dept(dept, grade, "普通科")
+        prac_targets = get_target_classes_for_dept(dept, grade, "實用技能班")
+        coop_targets = get_target_classes_for_dept(dept, grade, "建教班")
+        
+        if set(final_list) & set(reg_targets): st.session_state['cb_reg'] = True
+        if set(final_list) & set(prac_targets): st.session_state['cb_prac'] = True
+        if set(final_list) & set(coop_targets): st.session_state['cb_coop'] = True
+        
+        st.session_state['cb_all'] = (st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop'])
     
     else:
         current_idx = st.session_state.get('edit_index')
@@ -436,7 +437,41 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-   
+    st.markdown("""
+        <style>
+        html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
+        div[data-testid="stDataEditor"] { background-color: #ffffff !important; }
+        div[data-testid="stDataEditor"] table td {
+            font-size: 18px !important;
+            color: #000000 !important;
+            background-color: #ffffff !important;
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+            vertical-align: top !important;
+            height: auto !important;
+            min-height: 60px !important;
+            line-height: 1.6 !important;
+            border-bottom: 1px solid #e0e0e0 !important;
+            opacity: 1 !important;
+        }
+        div[data-testid="stDataEditor"] table td[aria-disabled="true"],
+        div[data-testid="stDataEditor"] table td[data-disabled="true"] {
+            color: #000000 !important; 
+            -webkit-text-fill-color: #000000 !important;
+            background-color: #ffffff !important;
+            opacity: 1 !important;
+        }
+        div[data-testid="stDataEditor"] table th {
+            font-size: 18px !important;
+            font-weight: bold !important;
+            background-color: #333333 !important;
+            color: #ffffff !important;
+            border-bottom: 2px solid #000000 !important;
+        }
+        thead tr th:first-child { display: none }
+        tbody th { display: none }
+        </style>
+    """, unsafe_allow_html=True)
 
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
@@ -528,9 +563,12 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
+            # 關鍵修正：確保 default 值在 options 裡
+            final_options = sorted(list(set(all_possible + st.session_state['active_classes'])))
+            
             selected_classes = st.multiselect(
                 "最終班級列表:",
-                options=all_possible,
+                options=final_options,
                 default=st.session_state['active_classes'],
                 key="class_multiselect",
                 on_change=on_multiselect_change
@@ -648,4 +686,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
