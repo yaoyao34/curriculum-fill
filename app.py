@@ -46,7 +46,7 @@ def get_connection():
             return None
     return gspread.authorize(creds)
 
-# --- 2. 資料讀取 ---
+# --- 2. 資料讀取 (核心修正：Curriculum 為主，History/Submission 為輔) ---
 def load_data(dept, semester, grade):
     client = get_connection()
     if not client: return pd.DataFrame()
@@ -56,6 +56,7 @@ def load_data(dept, semester, grade):
         ws_hist = sh.worksheet(SHEET_HISTORY)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
         
+        # 輔助函式：讀取並處理重複標頭
         def get_df(ws):
             data = ws.get_all_values()
             if not data: return pd.DataFrame()
@@ -95,6 +96,7 @@ def load_data(dept, semester, grade):
         st.error(f"讀取錯誤: {e}")
         return pd.DataFrame()
 
+    # 1. 篩選課綱 (Curriculum) - 這是基準
     mask_curr = (df_curr['科別'] == dept) & (df_curr['學期'] == str(semester)) & (df_curr['年級'] == str(grade))
     target_courses = df_curr[mask_curr]
 
@@ -103,17 +105,20 @@ def load_data(dept, semester, grade):
 
     display_rows = []
     
+    # 2. 針對課綱中的每一門課，逐一查找資料
     for _, row in target_courses.iterrows():
         c_name = row['課程名稱']
         c_type = row['課程類別']
         default_class = row.get('預設適用班級', '') 
         
+        # A. 優先找 Submission (本學期是否已填報過)
         sub_matches = pd.DataFrame()
         if not df_sub.empty:
              mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
              sub_matches = df_sub[mask_sub]
 
         if not sub_matches.empty:
+            # 有提交過 -> 顯示所有提交紀錄 (以 Submission 為準)
             for _, s_row in sub_matches.iterrows():
                 display_rows.append({
                     "勾選": False,
@@ -131,37 +136,37 @@ def load_data(dept, semester, grade):
                     "備註": s_row.get('備註', '')
                 })
         else:
+            # B. 沒提交過 -> 找 History (歷史紀錄)
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 這裡比對班級，如果找不到完全一樣的，就顯示多筆或空白
-                # 關鍵修正：從 History 讀取時，也要把 History 的班級帶進去
-                # 如果 History 有兩筆 (一建築, 一營造)，就要產生兩列
-                
-                # 這裡為了簡單，我們先找完全符合的，若無則列出所有同名課程
-                # 但要確保班級欄位正確從 h_row 讀取
-                
-                # 策略：如果 history 有完全符合 '預設適用班級' 的，優先顯示
+                # 如果 History 有資料，嘗試找完全對應班級的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 
-                target_rows = exact_match if not exact_match.empty else hist_matches
+                # 如果有完全對應班級的，只顯示這些
+                if not exact_match.empty:
+                    target_rows = exact_match
+                # 如果沒有完全對應的，但有同名課程 (例如以前是別班上的)，為了不漏掉，列出所有同名課程供參考
+                # (或者您可以選擇只列出第一筆，這裡保留所有以確保不漏)
+                else:
+                    target_rows = hist_matches
 
                 for _, h_row in target_rows.iterrows():
-                    # 確保讀取 History 中的班級
+                    # 如果是從 History 來的，優先使用 History 的班級，若無則用 Curriculum 預設
                     hist_class = h_row.get('適用班級', '')
-                    # 如果 History 班級是空的，就用 Curriculum 的預設班級
                     final_class = hist_class if hist_class else default_class
                     
                     display_rows.append({
                         "勾選": False,
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
-                        "適用班級": final_class, # 使用正確的班級
+                        "適用班級": final_class,
                         "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
                         "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
                         "備註": h_row.get('備註', '')
                     })
             else:
+                # C. 完全沒資料 (新課程) -> 顯示一筆空白列
                 display_rows.append({
                     "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
@@ -193,6 +198,7 @@ def save_submission(df_to_save):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data_list = []
     
+    # 補齊欄位
     for col in ["教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "適用班級", "備註"]:
         if col not in df_to_save.columns: df_to_save[col] = ""
 
@@ -320,7 +326,6 @@ def on_multiselect_change():
 
 def on_editor_change():
     """當表格勾選變動時觸發"""
-    # 確保 key 存在
     key = f"main_editor_{st.session_state['editor_key_counter']}"
     if key not in st.session_state: return
 
@@ -333,14 +338,11 @@ def on_editor_change():
             break
             
     if target_idx is not None:
-        # 單選互斥：重置所有勾選
         st.session_state['data']["勾選"] = False
         st.session_state['data'].at[target_idx, "勾選"] = True
         st.session_state['edit_index'] = target_idx
         
-        # 取得該列原始資料 (從 session_state['data'] 拿，這是最準的)
         row_data = st.session_state['data'].iloc[target_idx]
-        
         st.session_state['form_data'] = {
             'course': row_data["課程名稱"],
             'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
@@ -348,27 +350,19 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 關鍵：正確解析班級並填入 Multiselect
-        # 從 row_data["適用班級"] 讀取，這應該包含了原始資料庫的值
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        
-        # 過濾有效班級 (確保下拉選單有這些選項)
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
-        # 更新 Multiselect 的值
         st.session_state['active_classes'] = final_list
-        
-        # 重置 Checkbox 以免干擾 (或是根據班級反推勾選狀態，這裡簡化為全關，讓使用者自己加)
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
         st.session_state['cb_all'] = False
     
     else:
-        # 取消勾選
         current_idx = st.session_state.get('edit_index')
         if current_idx is not None and str(current_idx) in edits:
              if edits[str(current_idx)].get("勾選") is False:
@@ -391,7 +385,6 @@ def auto_load_data():
         st.session_state['cb_coop'] = False
         st.session_state['cb_all'] = False
         update_class_list_from_checkboxes()
-        
         st.session_state['editor_key_counter'] += 1
 
 # --- 8. 主程式 ---
@@ -539,7 +532,6 @@ def main():
             if is_edit_mode:
                 if st.button("🔄 更新表格", type="primary", use_container_width=True):
                     idx = st.session_state['edit_index']
-                    # 更新 DataFrame
                     st.session_state['data'].at[idx, "課程名稱"] = input_course
                     st.session_state['data'].at[idx, "教科書(優先1)"] = input_book1
                     st.session_state['data'].at[idx, "冊次(1)"] = input_vol1
@@ -552,11 +544,9 @@ def main():
                     st.session_state['data'].at[idx, "適用班級"] = input_class_str
                     st.session_state['data'].at[idx, "備註"] = input_note
                     
-                    # 關鍵：清空側邊欄，方便下一筆操作
                     st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                     st.session_state['active_classes'] = []
                     
-                    # 取消勾選並強制重繪
                     st.session_state['data'].at[idx, "勾選"] = False 
                     st.session_state['edit_index'] = None
                     st.session_state['last_selected_row'] = None 
@@ -579,7 +569,6 @@ def main():
                     st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
                     st.session_state['editor_key_counter'] += 1
                     
-                    # 加入後也清空側邊欄
                     st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                     st.session_state['active_classes'] = []
                     
@@ -623,7 +612,6 @@ def main():
 
         col_submit, _ = st.columns([1, 4])
         with col_submit:
-            # 修改為：存檔並轉 PDF (下載 HTML)
             if st.button("💾 存檔並轉 PDF (下載 HTML 報表)", type="primary", use_container_width=True):
                 if st.session_state['data'].empty:
                     st.error("表格是空的")
