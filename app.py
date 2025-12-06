@@ -134,7 +134,9 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 嘗試找完全對應班級的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
+                
                 if not exact_match.empty:
                     target_rows = exact_match
                 else:
@@ -341,7 +343,7 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 班級解析
+        # 關鍵修正：將班級字串解析並正確填入
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
@@ -577,7 +579,11 @@ def main():
                         "備註": input_note
                     }
                     st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
-                    st.session_state['editor_key_counter'] += 1 # 強制刷新
+                    st.session_state['editor_key_counter'] += 1
+                    
+                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
+                    st.session_state['active_classes'] = []
+                    
                     st.success(f"已加入：{input_course}")
                     st.rerun()
 
