@@ -137,15 +137,12 @@ def load_data(dept, semester, grade):
                 # 嘗試找完全對應班級的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 
-                # 如果有完全對應班級的，只顯示這些
                 if not exact_match.empty:
                     target_rows = exact_match
-                # 如果沒有完全對應的，但有同名課程 (例如以前是別班上的)，為了不漏掉，列出所有同名課程供參考
                 else:
                     target_rows = hist_matches
 
                 for _, h_row in target_rows.iterrows():
-                    # 如果是從 History 來的，優先使用 History 的班級，若無則用 Curriculum 預設
                     hist_class = h_row.get('適用班級', '')
                     final_class = hist_class if hist_class else default_class
                     
@@ -263,7 +260,6 @@ def create_html_report(df, dept, grade, semester):
 
 # --- 6. 班級計算邏輯 ---
 def get_all_possible_classes(grade):
-    """取得全校所有可能的班級"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     classes = []
@@ -273,18 +269,13 @@ def get_all_possible_classes(grade):
     return sorted(list(set(classes)))
 
 def get_target_classes_for_dept(dept, grade, sys_name):
-    """取得特定科別、特定學制的班級"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     suffixes = []
-    
-    # 修改點：如果是專業科系，只抓該科；否則抓全校該學制
     if dept in DEPT_SPECIFIC_CONFIG:
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
-        # 共同科目 (或未定義科別)，預設抓全校該學制
         suffixes = ALL_SUFFIXES.get(sys_name, [])
-        
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
@@ -322,7 +313,6 @@ def on_multiselect_change():
     st.session_state['active_classes'] = st.session_state['class_multiselect']
 
 def on_editor_change():
-    """當表格勾選變動時觸發"""
     key = f"main_editor_{st.session_state['editor_key_counter']}"
     if key not in st.session_state: return
 
