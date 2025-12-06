@@ -102,29 +102,24 @@ def load_data(dept, semester, grade):
 
     display_rows = []
     
-    # 核心邏輯修正：以 Curriculum 為主，展開每一筆課程設定
     for _, row in target_courses.iterrows():
         c_name = row['課程名稱']
         c_type = row['課程類別']
-        # Curriculum 中設定的預設班級，這是區分不同課程的重要依據
         default_class = row.get('預設適用班級', '') 
         
-        # 1. 先找 Submission (本學期已填報)
-        # 比對條件：科別 + 年級 + 學期 + 課程名稱 + 適用班級 (這很重要！)
         sub_matches = pd.DataFrame()
         if not df_sub.empty:
-             # 注意：Submission 的班級可能跟 Curriculum 預設的不完全一樣 (被修改過)
-             # 這裡我們放寬一點，只比對課程名稱，然後列出所有相關的提交紀錄
              mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
              sub_matches = df_sub[mask_sub]
 
         if not sub_matches.empty:
-            # 如果有提交紀錄，全部列出
             for _, s_row in sub_matches.iterrows():
                 display_rows.append({
                     "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
+                    # 調整順序：這裡只是字典，顯示順序在 st.data_editor 設定
+                    "適用班級": s_row.get('適用班級', default_class), # 移前
                     "教科書(優先1)": s_row.get('教科書(優先1)', '') or s_row.get('教科書(1)', ''), 
                     "冊次(1)": s_row.get('冊次(1)', ''), 
                     "出版社(1)": s_row.get('出版社(1)', ''), 
@@ -133,61 +128,43 @@ def load_data(dept, semester, grade):
                     "冊次(2)": s_row.get('冊次(2)', ''), 
                     "出版社(2)": s_row.get('出版社(2)', ''), 
                     "審定字號(2)": s_row.get('審定字號(2)', '') or s_row.get('字號(2)', ''),
-                    "適用班級": s_row.get('適用班級', default_class), "備註": s_row.get('備註', '')
+                    "備註": s_row.get('備註', '')
                 })
         else:
-            # 2. 沒提交過，找 History (歷史紀錄)
-            # 這裡只比對課程名稱
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 關鍵修正：如果在 History 找到多筆，我們需要判斷是否適用於當前的班級
-                # 但因為 History 的班級可能跟 Curriculum 不一樣，這裡採取寬鬆策略：
-                # 如果 History 有多筆，我們嘗試找「班級完全一樣」的
-                # 如果找不到完全一樣的，就列出所有可能的書 (讓老師自己挑或刪)
-                
-                # 進階：如果這門課在 Curriculum 有多筆 (例如A班一門，B班一門)
-                # 為了避免在 Dashboard 炸開，我們這裡只加入「最符合」的一筆，或者乾脆空白
-                
-                # 這裡採用最直覺的邏輯：
-                # 如果 Curriculum 指定了班級 (例如 '一機甲')，我們就在 History 找有沒有給 '一機甲' 的書
-                # 如果找不到，就給空白，讓老師填
-                
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
-                
                 if not exact_match.empty:
-                    # 找到完全對應班級的歷史紀錄 -> 載入
                     for _, h_row in exact_match.iterrows():
                         display_rows.append({
                             "勾選": False,
                             "科別": dept, "年級": grade, "學期": semester,
                             "課程類別": c_type, "課程名稱": c_name,
+                            "適用班級": default_class,
                             "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
                             "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
-                            "適用班級": default_class, # 使用 Curriculum 的班級
                             "備註": h_row.get('備註', '')
                         })
                 else:
-                    # History 有這門課，但班級對不上 (可能是給別班的)
-                    # 為了不漏掉，我們還是加一筆空白的，讓老師填
-                    # 或者，您可以選擇帶入第一筆 History 的書名當作參考 (這裡選擇空白比較保險，避免買錯書)
                     display_rows.append({
                         "勾選": False,
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
+                        "適用班級": default_class,
                         "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
                         "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
-                        "適用班級": default_class, "備註": ""
+                        "備註": ""
                     })
             else:
-                # 3. 完全沒資料 -> 空白列
                 display_rows.append({
                     "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
+                    "適用班級": default_class,
                     "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
                     "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
-                    "適用班級": default_class, "備註": ""
+                    "備註": ""
                 })
 
     return pd.DataFrame(display_rows)
@@ -247,7 +224,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
-# --- 6. Callbacks (含勾選互斥邏輯) ---
+# --- 6. Callbacks ---
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
@@ -278,9 +255,7 @@ def toggle_all_checkboxes():
     update_class_list_from_checkboxes()
 
 def on_editor_change():
-    """當表格有勾選變動時觸發"""
     edits = st.session_state["main_editor"]["edited_rows"]
-    
     target_idx = None
     for idx, changes in edits.items():
         if "勾選" in changes and changes["勾選"] is True:
@@ -341,12 +316,10 @@ def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # --- CSS 強力注入 ---
     st.markdown("""
         <style>
         html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
         div[data-testid="stDataEditor"] { background-color: #ffffff !important; }
-        
         div[data-testid="stDataEditor"] table td {
             font-size: 18px !important;
             color: #000000 !important;
@@ -360,7 +333,6 @@ def main():
             border-bottom: 1px solid #e0e0e0 !important;
             opacity: 1 !important;
         }
-        
         div[data-testid="stDataEditor"] table td[aria-disabled="true"],
         div[data-testid="stDataEditor"] table td[data-disabled="true"] {
             color: #000000 !important; 
@@ -368,7 +340,6 @@ def main():
             background-color: #ffffff !important;
             opacity: 1 !important;
         }
-        
         div[data-testid="stDataEditor"] table th {
             font-size: 18px !important;
             font-weight: bold !important;
@@ -376,7 +347,6 @@ def main():
             color: #ffffff !important;
             border-bottom: 2px solid #000000 !important;
         }
-        
         thead tr th:first-child { display: none }
         tbody th { display: none }
         </style>
@@ -543,9 +513,18 @@ def main():
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
+                # 調整順序：讓班級顯示在課程名稱後方 (在 data_editor 設定)
+                # 這裡透過順序來控制顯示，先把班級加進來
                 "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), 
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
-            }
+            },
+            # 指定欄位顯示順序
+            column_order=[
+                "勾選", "課程類別", "課程名稱", "適用班級", # 調整順序：班級移到這裡
+                "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)",
+                "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)",
+                "備註"
+            ]
         )
 
         col_submit, _ = st.columns([1, 4])
