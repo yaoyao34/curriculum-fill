@@ -134,27 +134,29 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 嘗試找完全對應班級的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
+                
+                # 如果有完全對應班級的，只顯示這些
                 if not exact_match.empty:
-                    for _, h_row in exact_match.iterrows():
-                        display_rows.append({
-                            "勾選": False,
-                            "科別": dept, "年級": grade, "學期": semester,
-                            "課程類別": c_type, "課程名稱": c_name,
-                            "適用班級": default_class,
-                            "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
-                            "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
-                            "備註": h_row.get('備註', '')
-                        })
+                    target_rows = exact_match
+                # 如果沒有完全對應的，但有同名課程 (例如以前是別班上的)，為了不漏掉，列出所有同名課程供參考
                 else:
+                    target_rows = hist_matches
+
+                for _, h_row in target_rows.iterrows():
+                    # 如果是從 History 來的，優先使用 History 的班級，若無則用 Curriculum 預設
+                    hist_class = h_row.get('適用班級', '')
+                    final_class = hist_class if hist_class else default_class
+                    
                     display_rows.append({
                         "勾選": False,
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
-                        "適用班級": default_class,
-                        "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
-                        "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
-                        "備註": ""
+                        "適用班級": final_class,
+                        "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
+                        "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
+                        "備註": h_row.get('備註', '')
                     })
             else:
                 display_rows.append({
@@ -348,9 +350,6 @@ def on_editor_change():
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         grade = st.session_state.get('grade_val')
-        
-        # 關鍵修正：Multiselect 的選項池必須是「全校班級」
-        # 這樣才能顯示那些手動加選的跨科班級
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
@@ -514,7 +513,6 @@ def main():
             with c3: st.checkbox("建教", key="cb_coop", on_change=update_class_list_from_checkboxes)
             
             st.caption("👇 點選加入其他班級")
-            # 這裡的選項必須是「全校班級」，否則無法顯示跨科班級
             all_possible = get_all_possible_classes(grade)
             
             selected_classes = st.multiselect(
