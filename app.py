@@ -4,7 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 import json
-import uuid
+import base64
 
 # --- 全域設定 ---
 SPREADSHEET_NAME = "教科書填報" 
@@ -116,7 +116,7 @@ def load_data(dept, semester, grade):
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
                 display_rows.append({
-                    "勾選": False,
+                    # 移除 "勾選": False, 改用原生選取
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
                     "適用班級": s_row.get('適用班級', default_class),
@@ -138,17 +138,15 @@ def load_data(dept, semester, grade):
                 if not exact_match.empty:
                     for _, h_row in exact_match.iterrows():
                         display_rows.append({
-                            "勾選": False,
                             "科別": dept, "年級": grade, "學期": semester,
                             "課程類別": c_type, "課程名稱": c_name,
-                            "適用班級": default_class,
+                            "適用班級": h_row.get('適用班級', default_class), # 這裡修正為讀取 history 班級
                             "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
                             "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
                             "備註": h_row.get('備註', '')
                         })
                 else:
                     display_rows.append({
-                        "勾選": False,
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
                         "適用班級": default_class,
@@ -158,7 +156,6 @@ def load_data(dept, semester, grade):
                     })
             else:
                 display_rows.append({
-                    "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
                     "適用班級": default_class,
@@ -202,7 +199,64 @@ def save_submission(df_to_save):
     ws_sub.append_rows(data_list)
     return True
 
-# --- 5. 班級計算邏輯 ---
+# --- 5. 產生 HTML 報表 ---
+def create_html_report(df, dept, grade, semester):
+    html = f"""
+    <html>
+    <head>
+        <title>{dept} {grade}年級 第{semester}學期 教科書選用表</title>
+        <style>
+            body {{ font-family: 'Microsoft JhengHei', sans-serif; padding: 20px; }}
+            h2 {{ text-align: center; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+            th, td {{ border: 1px solid black; padding: 8px; text-align: center; font-size: 12px; }}
+            th {{ background-color: #f2f2f2; }}
+            .footer {{ margin-top: 20px; text-align: right; }}
+        </style>
+    </head>
+    <body>
+        <h2>{dept} {grade}年級 第{semester}學期 教科書選用表</h2>
+        <p>列印時間：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>課程名稱</th><th>適用班級</th>
+                    <th>教科書(1)</th><th>冊次</th><th>出版社</th><th>字號</th>
+                    <th>教科書(2)</th><th>冊次</th><th>出版社</th><th>字號</th>
+                    <th>備註</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+    for _, row in df.iterrows():
+        html += f"""
+            <tr>
+                <td>{row['課程名稱']}</td>
+                <td>{row['適用班級']}</td>
+                <td>{row.get('教科書(優先1)', '')}</td>
+                <td>{row.get('冊次(1)', '')}</td>
+                <td>{row.get('出版社(1)', '')}</td>
+                <td>{row.get('審定字號(1)', '')}</td>
+                <td>{row.get('教科書(優先2)', '')}</td>
+                <td>{row.get('冊次(2)', '')}</td>
+                <td>{row.get('出版社(2)', '')}</td>
+                <td>{row.get('審定字號(2)', '')}</td>
+                <td>{row.get('備註', '')}</td>
+            </tr>
+        """
+    html += """
+            </tbody>
+        </table>
+        <div class="footer">
+            <p>填表人簽章：____________________</p>
+            <p>科主任簽章：____________________</p>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+# --- 6. 班級計算邏輯 ---
 def get_all_possible_classes(grade):
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
@@ -223,7 +277,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
-# --- 6. Callbacks ---
+# --- 7. Callbacks ---
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
@@ -253,51 +307,8 @@ def toggle_all_checkboxes():
     st.session_state['cb_coop'] = new_state
     update_class_list_from_checkboxes()
 
-def on_editor_change():
-    """表格編輯/勾選變動時觸發"""
-    # 如果還沒有 key，初始化為 0
-    if 'editor_key_counter' not in st.session_state:
-        st.session_state['editor_key_counter'] = 0
-        
-    edits = st.session_state[f"main_editor_{st.session_state['editor_key_counter']}"]["edited_rows"]
-    
-    target_idx = None
-    for idx, changes in edits.items():
-        if "勾選" in changes and changes["勾選"] is True:
-            target_idx = int(idx)
-            break
-            
-    if target_idx is not None:
-        st.session_state['data']["勾選"] = False
-        st.session_state['data'].at[target_idx, "勾選"] = True
-        st.session_state['edit_index'] = target_idx
-        
-        row_data = st.session_state['data'].iloc[target_idx]
-        st.session_state['form_data'] = {
-            'course': row_data["課程名稱"],
-            'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
-            'book2': row_data.get("教科書(優先2)", ""), 'vol2': row_data.get("冊次(2)", ""), 'pub2': row_data.get("出版社(2)", ""), 'code2': row_data.get("審定字號(2)", ""),
-            'note': row_data.get("備註", "")
-        }
-        
-        class_str = str(row_data.get("適用班級", ""))
-        class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        grade = st.session_state.get('grade_val')
-        valid_classes = get_all_possible_classes(grade) if grade else []
-        final_list = [c for c in class_list if c in valid_classes]
-        
-        st.session_state['active_classes'] = final_list
-        st.session_state['cb_reg'] = False
-        st.session_state['cb_prac'] = False
-        st.session_state['cb_coop'] = False
-        st.session_state['cb_all'] = False
-    
-    else:
-        current_idx = st.session_state.get('edit_index')
-        if current_idx is not None and str(current_idx) in edits:
-             if edits[str(current_idx)].get("勾選") is False:
-                 st.session_state['data'].at[current_idx, "勾選"] = False
-                 st.session_state['edit_index'] = None
+def on_multiselect_change():
+    st.session_state['active_classes'] = st.session_state['class_multiselect']
 
 def auto_load_data():
     dept = st.session_state.get('dept_val')
@@ -316,15 +327,15 @@ def auto_load_data():
         st.session_state['cb_all'] = False
         update_class_list_from_checkboxes()
         
-        # 載入時也重置 editor key
+        if 'editor_key_counter' not in st.session_state:
+             st.session_state['editor_key_counter'] = 0
         st.session_state['editor_key_counter'] += 1
 
-# --- 7. 主程式 ---
+# --- 8. 主程式 ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     st.title("📚 教科書填報系統")
 
-    # --- CSS 強力注入 ---
     st.markdown("""
         <style>
         html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
@@ -372,9 +383,6 @@ def main():
     if 'cb_reg' not in st.session_state: st.session_state['cb_reg'] = False
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
-    if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
-    
-    # 用來強制重繪 editor 的 key
     if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
     with st.sidebar:
@@ -407,8 +415,7 @@ def main():
             if is_edit_mode:
                 if st.button("❌ 取消修改", type="secondary"):
                     st.session_state['edit_index'] = None
-                    st.session_state['data']["勾選"] = False
-                    st.session_state['editor_key_counter'] += 1 # 強制刷新表格狀態
+                    st.session_state['editor_key_counter'] += 1
                     st.rerun()
 
             current_form = st.session_state['form_data']
@@ -455,7 +462,9 @@ def main():
             selected_classes = st.multiselect(
                 "最終班級列表:",
                 options=all_possible,
-                key="active_classes"
+                default=st.session_state['active_classes'],
+                key="class_multiselect",
+                on_change=on_multiselect_change
             )
             
             input_class_str = ",".join(selected_classes)
@@ -463,63 +472,60 @@ def main():
 
             if is_edit_mode:
                 if st.button("🔄 更新表格", type="primary", use_container_width=True):
-                    if not input_book1 or not input_pub1:
-                        st.error("⚠️ 書名和出版社為必填！")
-                    else:
-                        idx = st.session_state['edit_index']
-                        st.session_state['data'].at[idx, "課程名稱"] = input_course
-                        st.session_state['data'].at[idx, "教科書(優先1)"] = input_book1
-                        st.session_state['data'].at[idx, "冊次(1)"] = input_vol1
-                        st.session_state['data'].at[idx, "出版社(1)"] = input_pub1
-                        st.session_state['data'].at[idx, "審定字號(1)"] = input_code1
-                        st.session_state['data'].at[idx, "教科書(優先2)"] = input_book2
-                        st.session_state['data'].at[idx, "冊次(2)"] = input_vol2
-                        st.session_state['data'].at[idx, "出版社(2)"] = input_pub2
-                        st.session_state['data'].at[idx, "審定字號(2)"] = input_code2
-                        st.session_state['data'].at[idx, "適用班級"] = input_class_str
-                        st.session_state['data'].at[idx, "備註"] = input_note
-                        
-                        st.session_state['data'].at[idx, "勾選"] = False 
-                        st.session_state['edit_index'] = None
-                        st.session_state['last_selected_row'] = None 
-                        
-                        # 關鍵：更新 counter，強制重繪 editor
-                        st.session_state['editor_key_counter'] += 1
-                        
-                        st.success("更新成功！")
-                        st.rerun()
+                    idx = st.session_state['edit_index']
+                    st.session_state['data'].at[idx, "課程名稱"] = input_course
+                    st.session_state['data'].at[idx, "教科書(優先1)"] = input_book1
+                    st.session_state['data'].at[idx, "冊次(1)"] = input_vol1
+                    st.session_state['data'].at[idx, "出版社(1)"] = input_pub1
+                    st.session_state['data'].at[idx, "審定字號(1)"] = input_code1
+                    st.session_state['data'].at[idx, "教科書(優先2)"] = input_book2
+                    st.session_state['data'].at[idx, "冊次(2)"] = input_vol2
+                    st.session_state['data'].at[idx, "出版社(2)"] = input_pub2
+                    st.session_state['data'].at[idx, "審定字號(2)"] = input_code2
+                    st.session_state['data'].at[idx, "適用班級"] = input_class_str
+                    st.session_state['data'].at[idx, "備註"] = input_note
+                    
+                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
+                    st.session_state['active_classes'] = []
+                    
+                    st.session_state['edit_index'] = None
+                    st.session_state['editor_key_counter'] += 1 
+                    
+                    st.success("更新成功！")
+                    st.rerun()
             else:
                 if st.button("➕ 加入表格", type="secondary", use_container_width=True):
-                    if not input_book1 or not input_pub1:
-                        st.error("⚠️ 書名和出版社為必填！")
-                    else:
-                        new_row = {
-                            "勾選": False,
-                            "科別": dept, "年級": grade, "學期": sem,
-                            "課程類別": "部定必修", 
-                            "課程名稱": input_course,
-                            "教科書(優先1)": input_book1, "冊次(1)": input_vol1, "出版社(1)": input_pub1, "審定字號(1)": input_code1,
-                            "教科書(優先2)": input_book2, "冊次(2)": input_vol2, "出版社(2)": input_pub2, "審定字號(2)": input_code2,
-                            "適用班級": input_class_str,
-                            "備註": input_note
-                        }
-                        st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
-                        st.session_state['editor_key_counter'] += 1 # 強制刷新
-                        st.success(f"已加入：{input_course}")
-                        st.rerun()
+                    new_row = {
+                        "科別": dept, "年級": grade, "學期": sem,
+                        "課程類別": "部定必修", 
+                        "課程名稱": input_course,
+                        "教科書(優先1)": input_book1, "冊次(1)": input_vol1, "出版社(1)": input_pub1, "審定字號(1)": input_code1,
+                        "教科書(優先2)": input_book2, "冊次(2)": input_vol2, "出版社(2)": input_pub2, "審定字號(2)": input_code2,
+                        "適用班級": input_class_str,
+                        "備註": input_note
+                    }
+                    st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
+                    
+                    st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
+                    st.session_state['active_classes'] = []
+                    st.session_state['editor_key_counter'] += 1
+                    
+                    st.success(f"已加入：{input_course}")
+                    st.rerun()
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        edited_df = st.data_editor(
+        # 關鍵修改：啟用 selection_mode="single-row"，移除自己做的勾選欄
+        # 注意：data_editor 本身會回傳一個包含 selection 的物件
+        event = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
             use_container_width=True,
             height=600,
-            # 這裡使用動態 key，每次更新都會強制重繪
             key=f"main_editor_{st.session_state['editor_key_counter']}",
-            on_change=on_editor_change,
+            selection_mode="single-row", # 開啟單列選取模式
+            on_select="rerun",           # 選取後自動重跑
             column_config={
-                "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False),
                 "科別": None, 
                 "年級": None, 
                 "學期": None,
@@ -537,23 +543,63 @@ def main():
                 "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
             },
             column_order=[
-                "勾選", "課程類別", "課程名稱", "適用班級",
+                "課程類別", "課程名稱", "適用班級",
                 "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)",
                 "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)",
                 "備註"
             ]
         )
+        
+        # 處理選取事件 (取代原本的 Checkbox 邏輯)
+        if len(event.selection.rows) > 0:
+            target_idx = event.selection.rows[0]
+            
+            # 只有當選取的列跟上次不一樣時才載入，避免無限迴圈
+            if st.session_state.get('edit_index') != target_idx:
+                st.session_state['edit_index'] = target_idx
+                
+                row_data = st.session_state['data'].iloc[target_idx]
+                st.session_state['form_data'] = {
+                    'course': row_data["課程名稱"],
+                    'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
+                    'book2': row_data.get("教科書(優先2)", ""), 'vol2': row_data.get("冊次(2)", ""), 'pub2': row_data.get("出版社(2)", ""), 'code2': row_data.get("審定字號(2)", ""),
+                    'note': row_data.get("備註", "")
+                }
+                
+                class_str = str(row_data.get("適用班級", ""))
+                class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
+                grade = st.session_state.get('grade_val')
+                valid_classes = get_all_possible_classes(grade) if grade else []
+                final_list = [c for c in class_list if c in valid_classes]
+                
+                st.session_state['active_classes'] = final_list
+                st.session_state['cb_reg'] = False
+                st.session_state['cb_prac'] = False
+                st.session_state['cb_coop'] = False
+                st.session_state['cb_all'] = False
+                
+                st.rerun()
+        else:
+            # 如果取消選取 (點空白處)，則退出編輯模式
+            if st.session_state.get('edit_index') is not None:
+                st.session_state['edit_index'] = None
+                st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
+                st.session_state['active_classes'] = []
+                st.rerun()
 
         col_submit, _ = st.columns([1, 4])
         with col_submit:
-            if st.button("💾 確認提交 (寫入資料庫)", type="primary", use_container_width=True):
+            if st.button("💾 存檔並轉 PDF (下載 HTML 報表)", type="primary", use_container_width=True):
                 if st.session_state['data'].empty:
                     st.error("表格是空的")
                 else:
-                    with st.spinner("寫入中..."):
-                        if save_submission(st.session_state['data']):
-                            st.success("✅ 資料已成功提交！")
-                            st.balloons()
+                    with st.spinner("寫入資料庫並產生報表..."):
+                        save_submission(st.session_state['data'])
+                        html_report = create_html_report(st.session_state['data'], dept, grade, sem)
+                        b64 = base64.b64encode(html_report.encode('utf-8')).decode()
+                        href = f'<a href="data:text/html;base64,{b64}" download="{dept}_{grade}年級_第{sem}學期_教科書報表.html" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">📄 點此下載報表 (請開啟後按 Ctrl+P 存為 PDF)</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                        st.success("✅ 資料已存檔！請點擊上方按鈕下載報表。")
 
     else:
         st.info("👈 請先在左側選擇科別")
