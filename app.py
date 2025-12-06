@@ -116,7 +116,7 @@ def load_data(dept, semester, grade):
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
                 display_rows.append({
-                    # 移除 "勾選": False, 改用原生選取
+                    "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
                     "適用班級": s_row.get('適用班級', default_class),
@@ -136,26 +136,26 @@ def load_data(dept, semester, grade):
             if not hist_matches.empty:
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 if not exact_match.empty:
-                    for _, h_row in exact_match.iterrows():
-                        display_rows.append({
-                            "科別": dept, "年級": grade, "學期": semester,
-                            "課程類別": c_type, "課程名稱": c_name,
-                            "適用班級": h_row.get('適用班級', default_class), # 這裡修正為讀取 history 班級
-                            "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
-                            "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
-                            "備註": h_row.get('備註', '')
-                        })
+                    target_rows = exact_match
                 else:
+                    target_rows = hist_matches
+
+                for _, h_row in target_rows.iterrows():
+                    hist_class = h_row.get('適用班級', '')
+                    final_class = hist_class if hist_class else default_class
+                    
                     display_rows.append({
+                        "勾選": False,
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
-                        "適用班級": default_class,
-                        "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
-                        "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
-                        "備註": ""
+                        "適用班級": final_class,
+                        "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
+                        "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
+                        "備註": h_row.get('備註', '')
                     })
             else:
                 display_rows.append({
+                    "勾選": False,
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
                     "適用班級": default_class,
@@ -310,6 +310,51 @@ def toggle_all_checkboxes():
 def on_multiselect_change():
     st.session_state['active_classes'] = st.session_state['class_multiselect']
 
+def on_editor_change():
+    """當表格勾選變動時觸發"""
+    key = f"main_editor_{st.session_state['editor_key_counter']}"
+    if key not in st.session_state: return
+
+    edits = st.session_state[key]["edited_rows"]
+    
+    target_idx = None
+    for idx, changes in edits.items():
+        if "勾選" in changes and changes["勾選"] is True:
+            target_idx = int(idx)
+            break
+            
+    if target_idx is not None:
+        st.session_state['data']["勾選"] = False
+        st.session_state['data'].at[target_idx, "勾選"] = True
+        st.session_state['edit_index'] = target_idx
+        
+        row_data = st.session_state['data'].iloc[target_idx]
+        st.session_state['form_data'] = {
+            'course': row_data["課程名稱"],
+            'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
+            'book2': row_data.get("教科書(優先2)", ""), 'vol2': row_data.get("冊次(2)", ""), 'pub2': row_data.get("出版社(2)", ""), 'code2': row_data.get("審定字號(2)", ""),
+            'note': row_data.get("備註", "")
+        }
+        
+        class_str = str(row_data.get("適用班級", ""))
+        class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
+        grade = st.session_state.get('grade_val')
+        valid_classes = get_all_possible_classes(grade) if grade else []
+        final_list = [c for c in class_list if c in valid_classes]
+        
+        st.session_state['active_classes'] = final_list
+        st.session_state['cb_reg'] = False
+        st.session_state['cb_prac'] = False
+        st.session_state['cb_coop'] = False
+        st.session_state['cb_all'] = False
+    
+    else:
+        current_idx = st.session_state.get('edit_index')
+        if current_idx is not None and str(current_idx) in edits:
+             if edits[str(current_idx)].get("勾選") is False:
+                 st.session_state['data'].at[current_idx, "勾選"] = False
+                 st.session_state['edit_index'] = None
+
 def auto_load_data():
     dept = st.session_state.get('dept_val')
     sem = st.session_state.get('sem_val')
@@ -326,9 +371,6 @@ def auto_load_data():
         st.session_state['cb_coop'] = False
         st.session_state['cb_all'] = False
         update_class_list_from_checkboxes()
-        
-        if 'editor_key_counter' not in st.session_state:
-             st.session_state['editor_key_counter'] = 0
         st.session_state['editor_key_counter'] += 1
 
 # --- 8. 主程式 ---
@@ -383,6 +425,8 @@ def main():
     if 'cb_reg' not in st.session_state: st.session_state['cb_reg'] = False
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
+    if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
+    
     if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
     with st.sidebar:
@@ -415,6 +459,7 @@ def main():
             if is_edit_mode:
                 if st.button("❌ 取消修改", type="secondary"):
                     st.session_state['edit_index'] = None
+                    st.session_state['data']["勾選"] = False
                     st.session_state['editor_key_counter'] += 1
                     st.rerun()
 
@@ -488,7 +533,9 @@ def main():
                     st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                     st.session_state['active_classes'] = []
                     
+                    st.session_state['data'].at[idx, "勾選"] = False 
                     st.session_state['edit_index'] = None
+                    st.session_state['last_selected_row'] = None 
                     st.session_state['editor_key_counter'] += 1 
                     
                     st.success("更新成功！")
@@ -496,6 +543,7 @@ def main():
             else:
                 if st.button("➕ 加入表格", type="secondary", use_container_width=True):
                     new_row = {
+                        "勾選": False,
                         "科別": dept, "年級": grade, "學期": sem,
                         "課程類別": "部定必修", 
                         "課程名稱": input_course,
@@ -505,87 +553,55 @@ def main():
                         "備註": input_note
                     }
                     st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
+                    st.session_state['editor_key_counter'] += 1
                     
                     st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                     st.session_state['active_classes'] = []
-                    st.session_state['editor_key_counter'] += 1
                     
                     st.success(f"已加入：{input_course}")
                     st.rerun()
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # 關鍵修改：啟用 selection_mode="single-row"，移除自己做的勾選欄
-        # 注意：data_editor 本身會回傳一個包含 selection 的物件
-        event = st.data_editor(
+        # 建立要鎖定的欄位列表 (除了'勾選'以外)
+        cols = st.session_state['data'].columns.tolist()
+        disabled_cols = [c for c in cols if c != "勾選"]
+
+        edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
             use_container_width=True,
             height=600,
             key=f"main_editor_{st.session_state['editor_key_counter']}",
-            selection_mode="single-row", # 開啟單列選取模式
-            on_select="rerun",           # 選取後自動重跑
+            on_change=on_editor_change,
+            # 關鍵修正：disabled 參數設定
+            disabled=disabled_cols,
             column_config={
+                "勾選": st.column_config.CheckboxColumn("勾選", width="small"), # 移除 disabled=False (因為 disabled 參數已控制)
                 "科別": None, 
                 "年級": None, 
                 "學期": None,
-                "課程類別": st.column_config.TextColumn("類別", width="small", disabled=True),
-                "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
-                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), 
-                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True), 
-                "冊次(1)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
-                "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
-                "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
-                "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium", disabled=True),
-                "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
-                "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
-                "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                "備註": st.column_config.TextColumn("備註", width="medium", disabled=True),
+                # 移除所有 disabled=True，改用上方 disabled 參數
+                "課程類別": st.column_config.TextColumn("類別", width="small"),
+                "課程名稱": st.column_config.TextColumn("課程名稱", width="medium"),
+                "適用班級": st.column_config.TextColumn("適用班級", width="medium"), 
+                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium"), 
+                "冊次(1)": st.column_config.TextColumn("冊次", width="small"), 
+                "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small"),
+                "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small"),
+                "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium"),
+                "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small"), 
+                "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small"),
+                "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small"),
+                "備註": st.column_config.TextColumn("備註", width="medium"),
             },
             column_order=[
-                "課程類別", "課程名稱", "適用班級",
+                "勾選", "課程類別", "課程名稱", "適用班級",
                 "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)",
                 "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)",
                 "備註"
             ]
         )
-        
-        # 處理選取事件 (取代原本的 Checkbox 邏輯)
-        if len(event.selection.rows) > 0:
-            target_idx = event.selection.rows[0]
-            
-            # 只有當選取的列跟上次不一樣時才載入，避免無限迴圈
-            if st.session_state.get('edit_index') != target_idx:
-                st.session_state['edit_index'] = target_idx
-                
-                row_data = st.session_state['data'].iloc[target_idx]
-                st.session_state['form_data'] = {
-                    'course': row_data["課程名稱"],
-                    'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
-                    'book2': row_data.get("教科書(優先2)", ""), 'vol2': row_data.get("冊次(2)", ""), 'pub2': row_data.get("出版社(2)", ""), 'code2': row_data.get("審定字號(2)", ""),
-                    'note': row_data.get("備註", "")
-                }
-                
-                class_str = str(row_data.get("適用班級", ""))
-                class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-                grade = st.session_state.get('grade_val')
-                valid_classes = get_all_possible_classes(grade) if grade else []
-                final_list = [c for c in class_list if c in valid_classes]
-                
-                st.session_state['active_classes'] = final_list
-                st.session_state['cb_reg'] = False
-                st.session_state['cb_prac'] = False
-                st.session_state['cb_coop'] = False
-                st.session_state['cb_all'] = False
-                
-                st.rerun()
-        else:
-            # 如果取消選取 (點空白處)，則退出編輯模式
-            if st.session_state.get('edit_index') is not None:
-                st.session_state['edit_index'] = None
-                st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
-                st.session_state['active_classes'] = []
-                st.rerun()
 
         col_submit, _ = st.columns([1, 4])
         with col_submit:
