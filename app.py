@@ -86,7 +86,7 @@ def load_data(dept, semester, grade):
                     if c == '出版社': new_name = f"出版社({seen[c]})"
                     if c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                     # --- 處理備註欄位名稱 ---
-                    if c == '備註': new_name = f"備註{seen[c]}"
+                    if c == '備註': new_name = f"備註+{seen[c]}"
                     new_headers.append(new_name)
                 else:
                     seen[c] = 1
@@ -1089,5 +1089,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
