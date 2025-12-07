@@ -1,3 +1,13 @@
+好的，我理解您的需求。PDF 報表的視覺效果確實需要調整，以更好地呈現兩層優先級的教科書資訊，並簡化報表結構。
+
+我將進行以下修改：
+
+1.  **合併欄位：** 將第一優先和第二優先的**教科書、冊次、出版社、審定字號**共 8 個欄位合併成 4 個欄位，內容以換行符 `\n` 分隔，實現上下兩列顯示在同一格內。
+2.  **移除年級標題：** 移除 `【1 年級】` 等年級分隔標題，並修改排序邏輯，讓報表在學期下，**先依年級排序**，再依課程名稱排序，以維持資料的邏輯分組，但視覺上更連貫。
+
+以下是修改後的完整程式碼。
+
+```python
 import streamlit as st
 import pandas as pd
 import gspread
@@ -380,12 +390,12 @@ def create_pdf_report(dept):
         
     pdf.add_page()
     
-    # 定義表格欄位與寬度 (總寬度 259mm)
-    col_widths = [30, 25, 30, 12, 20, 25, 30, 12, 20, 25, 30] 
+    # --- 修正 1: 定義新的合併欄位與寬度 ---
+    # 總寬度約 259mm
+    col_widths = [30, 25, 45, 15, 30, 35, 79] 
     col_names = [
         "課程名稱", "適用班級", 
-        "教科書(1)", "冊次(1)", "出版社(1)", "審定字號(1)",
-        "教科書(2)", "冊次(2)", "出版社(2)", "審定字號(2)",
+        "教科書", "冊次", "出版社", "審定字號",
         "備註"
     ]
     
@@ -407,83 +417,108 @@ def create_pdf_report(dept):
     pdf.set_font(CHINESE_FONT, '', 8)
     
     for sem in sorted(df['學期'].unique()):
-        sem_df = df[df['學期'] == sem]
+        sem_df = df[df['學期'] == sem].copy()
         
         # 學期標頭
         pdf.set_font(CHINESE_FONT, 'B', 12)
         pdf.set_fill_color(200, 220, 255)
         pdf.cell(0, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
         
-        for g in sorted(sem_df['年級'].unique()):
-            grade_df = sem_df[sem_df['年級'] == str(g)]
-            if not grade_df.empty:
-                # 年級標頭
-                pdf.set_font(CHINESE_FONT, 'B', 10)
-                pdf.cell(0, 7, f"【{g} 年級】", 0, 1, 'L')
-                
-                grade_df = grade_df.sort_values(by='課程名稱')
-                
-                render_table_header(pdf)
+        # --- 修正 2: 移除年級循環，直接對整個學期資料排序 ---
+        if not sem_df.empty:
+            # 依 年級 -> 課程名稱 排序
+            sem_df = sem_df.sort_values(by=['年級', '課程名稱']) 
+            
+            render_table_header(pdf)
 
-                for _, row in grade_df.iterrows():
+            for _, row in sem_df.iterrows():
+                
+                # --- 修正 1: 合併欄位資料 ---
+                # 取得第一優先資料
+                b1 = row.get('教科書(優先1)') or row.get('教科書(1)', '')
+                v1 = row.get('冊次(1)', '')
+                p1 = row.get('出版社(1)', '')
+                c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
+                
+                # 取得第二優先資料
+                b2 = row.get('教科書(優先2)') or row.get('教科書(2)', '')
+                v2 = row.get('冊次(2)', '')
+                p2 = row.get('出版社(2)', '')
+                c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
+                
+                # 組合成兩行資料，以換行符分隔
+                data_row_to_write = [
+                    row['課程名稱'],
+                    row['適用班級'],
+                    # 合併欄位：
+                    f"{b1}\n{b2}", # 教科書
+                    f"{v1}\n{v2}", # 冊次
+                    f"{p1}\n{p2}", # 出版社
+                    f"{c1}\n{c2}", # 審定字號
+                    row.get('備註', '')
+                ]
+                
+                # 1. 計算最大行高 (用於 MultiCell 換行)
+                max_row_height = 0
+                pdf.set_font(CHINESE_FONT, '', 8)
+                # 針對前六個欄位，都預設為兩行 (因為我們強制加了 \n)
+                # 只有備註可能超過兩行
+                
+                # 計算備註行高 (備註是第 7 欄，索引 6)
+                note_height = pdf.get_string_width(data_row_to_write[6]) // (col_widths[6] * 0.9) * 4.5 + 4.5
+                
+                # 基準行高為兩行的高度
+                base_height = 9.0 
+                
+                row_height = max(base_height, note_height, 7.0) 
+                
+                # 2. 檢查是否需要換頁
+                if pdf.get_y() + row_height > pdf.page_break_trigger:
+                    pdf.add_page()
+                    pdf.set_font(CHINESE_FONT, 'B', 12)
+                    pdf.set_fill_color(200, 220, 255)
+                    pdf.cell(0, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
+                    render_table_header(pdf)
                     
-                    data_row_to_write = [
-                        row['課程名稱'],
-                        row['適用班級'],
-                        row.get('教科書(優先1)') or row.get('教科書(1)', ''), row.get('冊次(1)', ''), row.get('出版社(1)', ''), row.get('審定字號(1)') or row.get('字號(1)', ''),
-                        row.get('教科書(優先2)') or row.get('教科書(2)', ''), row.get('冊次(2)', ''), row.get('出版社(2)', ''), row.get('審定字號(2)') or row.get('字號(2)', ''),
-                        row.get('備註', '')
-                    ]
+                # 3. 繪製儲存格
+                start_x = pdf.get_x()
+                start_y = pdf.get_y()
+                
+                for i, (w, text) in enumerate(zip(col_widths, data_row_to_write)):
                     
-                    # 1. 計算最大行高 (用於 MultiCell 換行)
-                    max_row_height = 0
-                    pdf.set_font(CHINESE_FONT, '', 8)
-                    for w, text in zip(col_widths, data_row_to_write):
-                        # 粗略計算行數
-                        num_lines = pdf.get_string_width(str(text)) // (w * 0.9) + 1 
-                        max_row_height = max(max_row_height, num_lines * 4.5) 
+                    # 繪製單元格邊框/背景
+                    pdf.set_xy(start_x, start_y)
+                    pdf.cell(w, row_height, "", 1, 0, 'L')
                     
-                    row_height = max(7.0, max_row_height) 
+                    # 寫入內容
+                    pdf.set_xy(start_x, start_y) 
                     
-                    # 2. 檢查是否需要換頁
-                    if pdf.get_y() + row_height > pdf.page_break_trigger:
-                        pdf.add_page()
-                        pdf.set_font(CHINESE_FONT, 'B', 12)
-                        pdf.set_fill_color(200, 220, 255)
-                        pdf.cell(0, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
-                        pdf.set_font(CHINESE_FONT, 'B', 10)
-                        pdf.cell(0, 7, f"【{g} 年級】 (續)", 0, 1, 'L')
-                        render_table_header(pdf)
-                        
-                    # 3. 繪製儲存格
-                    start_x = pdf.get_x()
-                    start_y = pdf.get_y()
-                    
-                    for i, (w, text) in enumerate(zip(col_widths, data_row_to_write)):
-                        
-                        # 繪製單元格邊框/背景
-                        pdf.set_xy(start_x, start_y)
-                        pdf.cell(w, row_height, "", 1, 0, 'L')
-                        
-                        # 寫入內容
-                        # 垂直置中計算 (簡化版)
+                    # 欄位對齊方式
+                    if i in [2, 3, 4, 5]: # 教科書, 冊次, 出版社, 審定字號 (需要兩行)
+                        pdf.set_font(CHINESE_FONT, '', 8)
+                        # 讓第一優先內容靠上，第二優先內容靠下。
+                        # 使用 MultiCell，並將 Y 座標設為 start_y + 1 (微調置中)
+                        pdf.set_xy(start_x, start_y + (row_height - base_height) / 2 + 0.5)
+                        align = 'L'
+                        pdf.multi_cell(w, 4.0, str(text), 0, align, 0)
+                    else:
+                        # 其他欄位 (課程名稱, 適用班級, 備註) 垂直置中
                         num_lines_in_cell = (pdf.get_string_width(str(text)) // (w * 0.9) + 1)
                         y_pos = start_y + (row_height - num_lines_in_cell * 4.5) / 2
                         pdf.set_xy(start_x, y_pos) 
                         
-                        # 欄位對齊方式: 窄欄位居中，寬欄位靠左
-                        align = 'C' if w < 25 and i not in [1, 6, 10] else 'L'
-
+                        align = 'C' if i == 3 else 'L' # 冊次居中(已移除，故都靠左)
+                        align = 'L'
                         pdf.set_font(CHINESE_FONT, '', 8)
                         pdf.multi_cell(w, 4.5, str(text), 0, align, 0)
                         
-                        # 手動移動 X 座標
-                        start_x += w 
+                    # 手動移動 X 座標
+                    start_x += w 
+                
+                # 移動 Y 座標到下一行
+                pdf.set_y(start_y + row_height)
                     
-                    # 移動 Y 座標到下一行
-                    pdf.set_y(start_y + row_height)
-                    
-                pdf.ln(5) 
+            pdf.ln(5) 
     
     
     # 頁尾簽名區
@@ -502,7 +537,6 @@ def create_pdf_report(dept):
         pdf.cell(cell_width, 10, text, 'B', 0, 'L')
     pdf.ln()
 
-    # **核心修正：移除 .encode('latin-1')，因為 pdf.output(dest='S') 已經返回 bytes。**
     return pdf.output(dest='S')
 
 # --- 6. 班級計算邏輯 (核心修正區) ---
@@ -964,7 +998,7 @@ def main():
                 with st.spinner(f"正在抓取 {dept} 所有資料並產生 PDF 報表..."):
                     pdf_report_bytes = create_pdf_report(dept)
                     
-                    if pdf_report_bytes:
+                    if pdf_report_bytes is not None:
                         # base64.b64encode 接受 bytes，回傳 bytes
                         b64_bytes = base64.b64encode(pdf_report_bytes)
                         # 將 base64 bytes 解碼為字串，用於 HTML a 標籤
@@ -983,3 +1017,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
