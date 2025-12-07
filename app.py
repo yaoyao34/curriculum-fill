@@ -479,7 +479,7 @@ def create_pdf_report(dept):
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
                 # 備註欄位：確保只從 DF 中取出值
-                r1 = str(row.get('備註1', '')).strip() 
+                r1 = str(row.get('備註1', '')).strip('備註1') 
                 
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
@@ -1113,6 +1113,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
