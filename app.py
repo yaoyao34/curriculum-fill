@@ -174,11 +174,11 @@ def get_course_list():
         return st.session_state['data']['課程名稱'].unique().tolist()
     return []
 
-# --- 4. 存檔 (單筆寫入) ---
+# --- 4. 存檔 (修正：正確對應 CSV 欄位順序) ---
 def save_single_row(row_data):
     """
     將單筆資料直接寫入/更新至 Google Sheets 的 Submission_Records。
-    如果已經存在該課程的紀錄，則覆蓋或新增（視為最新填報）。
+    注意：Submission_Records.csv 的順序是: 填報時間, 科別, 學期, 年級, ...
     """
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
@@ -186,41 +186,39 @@ def save_single_row(row_data):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
-        ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
+        # 這裡也要確保標題列正確
+        ws_sub.append_row(["填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # 準備資料列
+    # 修正重點：欄位順序改成 [時間, 科別, 學期, 年級, ...]
     row_to_append = [
         timestamp,
-        row_data['科別'], row_data['年級'], row_data['學期'], row_data['課程名稱'],
+        row_data['科別'], 
+        row_data['學期'], # 這裡修正了：學期在前
+        row_data['年級'], # 年級在後
+        row_data['課程名稱'],
         row_data['教科書(優先1)'], row_data['冊次(1)'], row_data['出版社(1)'], row_data['審定字號(1)'],
         row_data['教科書(優先2)'], row_data['冊次(2)'], row_data['出版社(2)'], row_data['審定字號(2)'],
         row_data['適用班級'], row_data['備註']
     ]
     
-    # 這裡採用最簡單的策略：直接 Append 到最後一行，視為最新紀錄
-    # 讀取時 load_data 會自動抓取符合條件的所有紀錄，所以重複 Append 沒問題 (視為多本書或更新)
     ws_sub.append_row(row_to_append)
     return True
 
-# --- 5. 產生 HTML 報表 (修正：抓取全學年所有資料) ---
+# --- 5. 產生 HTML 報表 (修正：上下兩列顯示) ---
 def create_full_report(dept):
-    """
-    抓取該科別、該學期 (不分年級) 的所有 Submission 資料，產生完整報表。
-    """
     client = get_connection()
-    sh = client.open(SPREADSHEET_NAME)
     try:
+        sh = client.open(SPREADSHEET_NAME)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
-        # 使用 get_all_values 手動處理標頭，避免重複欄位錯誤
         data = ws_sub.get_all_values()
         if not data: return "<h1>尚無提交資料</h1>"
         
         headers = data[0]
         rows = data[1:]
         
-        # 處理重複標頭 (同 load_data 邏輯)
+        # 處理重複標頭
         seen = {}
         new_headers = []
         for col in headers:
@@ -228,18 +226,14 @@ def create_full_report(dept):
             if c in seen:
                 seen[c] += 1
                 new_name = f"{c}({seen[c]})"
-                # 為了跟 save_single_row 對應，這裡要小心對應
-                # Submission 標頭通常是: 教科書(1), 冊次, 出版社, 字號, 教科書(2), 冊次, 出版社, 字號
-                # 如果是這樣，第二個 '冊次' 會變成 '冊次(2)'，剛好符合我們的 DataFrame 欄位
                 if c == '冊次': new_name = f"冊次({seen[c]})"
                 if c == '出版社': new_name = f"出版社({seen[c]})"
-                if c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})" # 注意這裡要對應 load_data
+                if c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                 if c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
-                # 第一次出現
-                if c == '教科書(1)': new_headers.append('教科書(優先1)') # 如果 CSV 是 教科書(1)
+                if c == '教科書(1)': new_headers.append('教科書(優先1)')
                 elif c == '教科書': new_headers.append('教科書(優先1)')
                 elif c == '冊次': new_headers.append('冊次(1)')
                 elif c == '出版社': new_headers.append('出版社(1)')
@@ -254,23 +248,12 @@ def create_full_report(dept):
     if df.empty:
         return f"<h1>{dept} 尚無提交資料</h1>"
         
-    # 轉型
     if '年級' in df.columns: df['年級'] = df['年級'].astype(str)
     if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
     
-    # 篩選科別
     df = df[df['科別'] == dept]
+    if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
-    if df.empty:
-        return f"<h1>{dept} 尚無提交資料</h1>"
-
-    # 去重：針對同一門課 (年級, 學期, 課程名稱, 適用班級)，只取時間最晚的那一筆
-    # 因為我們是 Append 寫入，所以最後一筆就是最新的
-    # 這裡我們以 '課程名稱' + '適用班級' 為唯一鍵，避免同一課名不同班級被刪
-    # 但如果使用者是「修改」同一班級的同一門課，我們希望只保留最新的
-    # 所以 subset 應該包含 適用班級
-    
-    # 注意：如果 df['填報時間'] 是字串，sort_values 也能正確排序 (ISO格式)
     df = df.sort_values(by='填報時間')
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
@@ -284,10 +267,11 @@ def create_full_report(dept):
             h2 {{ background-color: #eee; padding: 5px; border-left: 5px solid #333; }}
             h3 {{ margin-top: 15px; border-bottom: 1px solid #ccc; }}
             table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-            th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; }}
+            th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; vertical-align: middle; }}
             th {{ background-color: #f2f2f2; }}
+            .book-row {{ margin-bottom: 4px; }}
+            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; padding-top: 2px; margin-top: 2px; display: block; }}
             .footer {{ margin-top: 30px; text-align: right; }}
-            .page-break {{ page-break-before: always; }}
         </style>
     </head>
     <body>
@@ -295,7 +279,6 @@ def create_full_report(dept):
         <p style="text-align:center;">列印時間：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
     """
     
-    # 分學期顯示 (1, 2)
     for sem in ['1', '2']:
         html += f"<h2>第 {sem} 學期</h2>"
         sem_df = df[df['學期'] == sem]
@@ -303,7 +286,6 @@ def create_full_report(dept):
         if sem_df.empty:
             html += "<p>尚無資料</p>"
         else:
-            # 分年級顯示
             for g in sorted(sem_df['年級'].unique()):
                 grade_df = sem_df[sem_df['年級'] == str(g)]
                 if not grade_df.empty:
@@ -314,39 +296,54 @@ def create_full_report(dept):
                             <tr>
                                 <th style="width:15%">課程名稱</th>
                                 <th style="width:15%">適用班級</th>
-                                <th style="width:20%">教科書(1)</th>
+                                <th style="width:25%">教科書名稱</th>
                                 <th style="width:5%">冊次</th>
                                 <th style="width:10%">出版社</th>
                                 <th style="width:10%">字號</th>
-                                <th style="width:25%">備註</th>
+                                <th style="width:20%">備註</th>
                             </tr>
                         </thead>
                         <tbody>
                     """
                     grade_df = grade_df.sort_values(by='課程名稱')
                     for _, row in grade_df.iterrows():
-                        book2_info = ""
-                        # 檢查是否有第二本書 (相容不同欄位名稱)
-                        # 注意：這裡使用 get 並提供預設值，避免 KeyError
-                        b2 = row.get('教科書(優先2)') or row.get('教科書(2)', '')
-                        if b2:
-                            v2 = row.get('冊次(2)', '')
-                            p2 = row.get('出版社(2)', '')
-                            book2_info = f"<br><span style='color:blue; font-size:0.9em'>(2) {b2} / {v2} / {p2}</span>"
+                        # 第一本書
+                        b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
+                        # 有時候讀取會因為 header 處理有點偏差，這裡做個防呆
+                        if not b1 and '教科書(優先1)' in row: b1 = row['教科書(優先1)']
                         
-                        b1 = row.get('教科書(優先1)') or row.get('教科書(1)', '')
                         v1 = row.get('冊次(1)', '')
                         p1 = row.get('出版社(1)', '')
                         c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
+                        
+                        # 第二本書 (如果有)
+                        b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
+                        if not b2 and '教科書(優先2)' in row: b2 = row['教科書(優先2)']
+                        
+                        # 顯示內容組合：如果有第二本，就用上下列顯示
+                        book_content = f"<div class='book-row'>{b1}</div>"
+                        vol_content = f"<div class='book-row'>{v1}</div>"
+                        pub_content = f"<div class='book-row'>{p1}</div>"
+                        code_content = f"<div class='book-row'>{c1}</div>"
+                        
+                        if b2:
+                            v2 = row.get('冊次(2)', '')
+                            p2 = row.get('出版社(2)', '')
+                            c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
+                            
+                            book_content += f"<div class='book-secondary'>{b2}</div>"
+                            vol_content += f"<div class='book-secondary'>{v2}</div>"
+                            pub_content += f"<div class='book-secondary'>{p2}</div>"
+                            code_content += f"<div class='book-secondary'>{c2}</div>"
                         
                         html += f"""
                             <tr>
                                 <td>{row['課程名稱']}</td>
                                 <td>{row['適用班級']}</td>
-                                <td>{b1}{book2_info}</td>
-                                <td>{v1}</td>
-                                <td>{p1}</td>
-                                <td>{c1}</td>
+                                <td>{book_content}</td>
+                                <td>{vol_content}</td>
+                                <td>{pub_content}</td>
+                                <td>{code_content}</td>
                                 <td>{row.get('備註', '')}</td>
                             </tr>
                         """
@@ -387,8 +384,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    # 關鍵修正：必須從 'class_multiselect' 取目前的值，因為它是 Widget 的 key
-    current_list = list(st.session_state.get('class_multiselect', []))
+    current_list = list(st.session_state.get('active_classes', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
@@ -400,11 +396,8 @@ def update_class_list_from_checkboxes():
             for c in target_classes:
                 if c in current_list: current_list.remove(c)
     
-    # 關鍵修正：同時更新 active_classes 和 Widget 的 key (class_multiselect)
-    final_list = sorted(list(set(current_list)))
-    st.session_state['active_classes'] = final_list
-    st.session_state['class_multiselect'] = final_list 
-
+    st.session_state['active_classes'] = sorted(list(set(current_list)))
+    
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -589,11 +582,6 @@ def main():
                         
                         # 刪除也要存檔
                         with st.spinner("同步資料庫..."):
-                            # 為了簡單，這裡不執行真正的刪除(因為是Append模式)，而是重新載入
-                            # 或是可以不存檔，只在前端刪除，等使用者按最下面的 PDF 按鈕才不顯示
-                            # 但您的需求是「單筆存檔」，所以這裡我們不做資料庫刪除動作 (Append 模式無法刪除舊資料)
-                            # 如果真的要刪除，需要重寫整個 Sheet，這會很慢
-                            # 所以這裡僅前端刪除，讓使用者 "感覺" 刪除了。
                             pass
                         
                         st.success("已從列表中移除 (資料庫紀錄仍保留)")
