@@ -965,4 +965,121 @@ def main():
                             save_single_row(new_row, st.session_state.get('original_key'))
 
                         for k, v in new_row.items():
-                            if k in st.session_state['
+                            if k in st.session_state['data'].columns:
+                                st.session_state['data'].at[idx, k] = v
+                        st.session_state['data'].at[idx, "勾選"] = False
+
+                        # 清空 form_data
+                        st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
+                        st.session_state['form_data']['vol1'] = '全'
+                        st.session_state['form_data']['vol2'] = '全'
+                        st.session_state['active_classes'] = []
+                        
+                        st.session_state['edit_index'] = None
+                        st.session_state['original_key'] = None
+                        st.session_state['current_uuid'] = None
+                        st.session_state['editor_key_counter'] += 1 
+                        
+                        st.success("✅ 更新並存檔成功！")
+                        st.rerun()
+            else:
+                if st.button("➕ 加入表格 (存檔)", type="primary", use_container_width=True):
+                    # 班級必填檢查
+                    if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
+                        st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
+                    else:
+                        new_uuid = str(uuid.uuid4())
+                        new_row = {
+                            "勾選": False,
+                            "uuid": new_uuid,
+                            "科別": dept, "年級": grade, "學期": sem,
+                            "課程類別": "部定必修", 
+                            "課程名稱": input_course,
+                            "教科書(優先1)": input_book1, "冊次(1)": input_vol1, "出版社(1)": input_pub1, "審定字號(1)": input_code1,
+                            "教科書(優先2)": input_book2, "冊次(2)": input_vol2, "出版社(2)": input_pub2, "審定字號(2)": input_code2,
+                            "適用班級": input_class_str,
+                            "備註1": input_note1, # 存入備註1
+                            "備註2": input_note2  # 存入備註2
+                        }
+                        
+                        with st.spinner("正在寫入資料庫..."):
+                            save_single_row(new_row, None) # 新增無 key
+                            
+                        st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
+                        st.session_state['editor_key_counter'] += 1
+                        
+                        # 清空 form_data
+                        st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
+                        st.session_state['form_data']['vol1'] = '全'
+                        st.session_state['form_data']['vol2'] = '全'
+                        st.session_state['active_classes'] = []
+                        
+                        st.success(f"✅ 已存檔：{input_course}")
+                        st.rerun()
+
+        st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
+        
+        # --- 修正 10: 調整 Streamlit data_editor 的欄寬配置 ---
+        edited_df = st.data_editor(
+            st.session_state['data'],
+            num_rows="dynamic",
+            use_container_width=True,
+            height=600,
+            key=f"main_editor_{st.session_state['editor_key_counter']}",
+            on_change=on_editor_change,
+            column_config={
+                "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False),
+                "uuid": None,
+                "科別": None, 
+                "年級": None, 
+                "學期": None,
+                "課程類別": st.column_config.TextColumn("類別", width="small", disabled=True),
+                "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
+                "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), 
+                
+                "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True), 
+                "冊次(1)": st.column_config.TextColumn("冊次(1)", width="small", disabled=True), 
+                "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
+                "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
+                "備註1": st.column_config.TextColumn("備註(1)", width="small", disabled=True), 
+                
+                "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium", disabled=True),
+                "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
+                "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
+                "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
+                "備註2": st.column_config.TextColumn("備註(2)", width="small", disabled=True), 
+            },
+            # 調整欄位順序以符合要求：審定字號和備註與對應的冊次/出版社放在一起
+            column_order=[
+                "勾選", "課程類別", "課程名稱", "適用班級",
+                "教科書(優先1)", "冊次(1)", "審定字號(1)", "出版社(1)", "備註1", 
+                "教科書(優先2)", "冊次(2)", "審定字號(2)", "出版社(2)", "備註2" 
+            ]
+        )
+
+        col_submit, _ = st.columns([1, 4])
+        with col_submit:
+            # --- 核心修改區域：呼叫 PDF 生成函式，並提供下載連結 ---
+            if st.button("📄 轉 PDF 報表 (下載)", type="primary", use_container_width=True):
+                with st.spinner(f"正在抓取 {dept} 所有資料並產生 PDF 報表..."):
+                    pdf_report_bytes = create_pdf_report(dept)
+                    
+                    if pdf_report_bytes is not None:
+                        # base64.b64encode 接受 bytes，回傳 bytes
+                        b64_bytes = base64.b64encode(pdf_report_bytes)
+                        # 將 base64 bytes 解碼為字串，用於 HTML a 標籤
+                        b64 = b64_bytes.decode('latin-1') 
+                        
+                        # 提供 PDF 下載連結
+                        href = f'<a href="data:application/pdf;base64,{b64}" download="{dept}_教科書總表.pdf" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">⬇️ 點此下載完整 PDF 報表 (含上下學期/各年級)</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                        st.success("✅ PDF 報表已生成！")
+                    else:
+                        st.error("❌ PDF 報表生成失敗，請檢查資料或連線設定。**（若中文亂碼，請依 NOTE 註冊中文字體）**")
+            # --- 核心修改結束 ---
+
+    else:
+        st.info("👈 請先在左側選擇科別")
+
+if __name__ == "__main__":
+    main()
