@@ -418,11 +418,15 @@ def get_all_possible_classes(grade):
     return sorted(list(set(classes)))
 
 def get_target_classes_for_dept(dept, grade, sys_name):
-    # 修改重點：無論科別為何，只要勾選該學制，就回傳該學制下 全校所有的班級。
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
+    suffixes = []
     
-    suffixes = ALL_SUFFIXES.get(sys_name, [])
+    # 關鍵修正：如果該科有設定就抓該科，否則抓全校該學制 (共同科目邏輯)
+    if dept in DEPT_SPECIFIC_CONFIG:
+        suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
+    else:
+        suffixes = ALL_SUFFIXES.get(sys_name, [])
         
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
@@ -479,7 +483,6 @@ def on_editor_change():
         
         row_data = st.session_state['data'].iloc[target_idx]
         
-        # 記錄原始 key (包含 UUID)
         st.session_state['original_key'] = {
             '科別': row_data['科別'],
             '年級': str(row_data['年級']),
@@ -487,7 +490,6 @@ def on_editor_change():
             '課程名稱': row_data['課程名稱'],
             '適用班級': str(row_data.get('適用班級', ''))
         }
-        # 傳遞 UUID
         st.session_state['current_uuid'] = row_data.get('uuid')
         
         st.session_state['form_data'] = {
@@ -499,7 +501,6 @@ def on_editor_change():
         
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
