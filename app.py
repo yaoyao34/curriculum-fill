@@ -82,20 +82,21 @@ def load_data(dept, semester, grade):
                     seen[c] += 1
                     new_name = f"{c}({seen[c]})"
                     if c == '教科書': new_name = f"教科書(優先{seen[c]})"
-                    if c == '冊次': new_name = f"冊次({seen[c]})"
-                    if c == '出版社': new_name = f"出版社({seen[c]})"
-                    if c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
+                    elif c == '冊次': new_name = f"冊次({seen[c]})"
+                    elif c == '出版社': new_name = f"出版社({seen[c]})"
+                    elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                     # --- 處理備註欄位名稱 ---
-                    if c == '備註': new_name = f"備註{seen[c]}"
+                    elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
                     new_headers.append(new_name)
                 else:
                     seen[c] = 1
-                    if c == '教科書': new_headers.append('教科書(優先1)')
+                    if c == '教科書(1)': new_headers.append('教科書(優先1)')
+                    elif c == '教科書': new_headers.append('教科書(優先1)')
                     elif c == '冊次': new_headers.append('冊次(1)')
                     elif c == '出版社': new_headers.append('出版社(1)')
                     elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
                     # --- 處理備註欄位名稱 ---
-                    elif c == '備註': new_headers.append('備註1')
+                    elif c == '備註' or c.startswith('備註'): new_headers.append('備註1')
                     else: new_headers.append(c)
             return pd.DataFrame(rows, columns=new_headers)
 
@@ -132,6 +133,13 @@ def load_data(dept, semester, grade):
 
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
+                # --- 修正 1.1: 檢查欄位是否存在後才讀取，避免誤讀其他欄位 ---
+                has_備註1 = '備註1' in s_row.index and s_row['備註1'] is not None and s_row['備註1'] != ''
+                has_備註2 = '備註2' in s_row.index and s_row['備註2'] is not None and s_row['備註2'] != ''
+                
+                備註1_val = s_row['備註1'] if has_備註1 else (s_row.get('備註', '') if '備註' in s_row.index else '')
+                備註2_val = s_row['備註2'] if has_備註2 else ''
+
                 display_rows.append({
                     "勾選": False,
                     "uuid": s_row.get('uuid', str(uuid.uuid4())), 
@@ -146,9 +154,8 @@ def load_data(dept, semester, grade):
                     "冊次(2)": s_row.get('冊次(2)', ''), 
                     "出版社(2)": s_row.get('出版社(2)', ''), 
                     "審定字號(2)": s_row.get('審定字號(2)', '') or s_row.get('字號(2)', ''),
-                    # 確保這裡的鍵名是 '備註1' 和 '備註2'，以便後續正確獲取
-                    "備註1": s_row.get('備註1', '') or s_row.get('備註', ''), 
-                    "備註2": s_row.get('備註2', '')
+                    "備註1": 備註1_val, 
+                    "備註2": 備註2_val
                 })
         else:
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
@@ -161,6 +168,13 @@ def load_data(dept, semester, grade):
                     hist_class = h_row.get('適用班級', '')
                     final_class = hist_class if hist_class else default_class
                     
+                    # --- 修正 1.2: 檢查欄位是否存在後才讀取 ---
+                    has_備註1 = '備註1' in h_row.index and h_row['備註1'] is not None and h_row['備註1'] != ''
+                    has_備註2 = '備註2' in h_row.index and h_row['備註2'] is not None and h_row['備註2'] != ''
+                    
+                    備註1_val = h_row['備註1'] if has_備註1 else (h_row.get('備註', '') if '備註' in h_row.index else '')
+                    備註2_val = h_row['備註2'] if has_備註2 else ''
+
                     display_rows.append({
                         "勾選": False,
                         "uuid": str(uuid.uuid4()), 
@@ -169,8 +183,8 @@ def load_data(dept, semester, grade):
                         "適用班級": final_class,
                         "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
                         "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
-                        "備註1": h_row.get('備註1', '') or h_row.get('備註', ''),
-                        "備註2": h_row.get('備註2', '')
+                        "備註1": 備註1_val,
+                        "備註2": 備註2_val
                     })
             else:
                 display_rows.append({
@@ -442,7 +456,7 @@ def create_pdf_report(dept):
             
             render_table_header(pdf)
 
-            for _, row in sem_df.iterrows():
+            for index, row in sem_df.iterrows(): # 使用 index, row 方便 debug
                 
                 # --- 修正 9: 確保所有取出的數據都轉換為 str()，並去除空白，避免 Pandas Series 輸出 ---
                 b1 = str(row.get('教科書(優先1)') or row.get('教科書(1)', '')).strip()
@@ -457,6 +471,11 @@ def create_pdf_report(dept):
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
                 r2 = str(row.get('備註2', '')).strip()
+
+                # --- Debug 模式 (在 PDF 中輸出 r1, r2 的原始值) ---
+                # 如果要 debug，請取消註解以下幾行，並將其放入 data_row_to_write 的適當位置
+                # debug_text = f"r1:{r1}, r2:{r2}"
+                # 課程名稱 = f"{row['課程名稱']}\n{debug_text}" 
                 
                 # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
