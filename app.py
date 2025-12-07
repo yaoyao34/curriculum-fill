@@ -136,13 +136,8 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
-                
-                if not exact_match.empty:
-                    target_rows = exact_match
-                else:
-                    target_rows = hist_matches
+                target_rows = exact_match if not exact_match.empty else hist_matches
 
                 for _, h_row in target_rows.iterrows():
                     hist_class = h_row.get('適用班級', '')
@@ -178,7 +173,7 @@ def get_course_list():
         return st.session_state['data']['課程名稱'].unique().tolist()
     return []
 
-# --- 4. 存檔 (單筆寫入) ---
+# --- 4. 存檔 (修正：欄位順序 & 支援覆蓋) ---
 def save_single_row(row_data, original_key=None):
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
@@ -186,6 +181,7 @@ def save_single_row(row_data, original_key=None):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
+        # 標題列順序：uuid, 填報時間, 科別, 學期, 年級 ...
         ws_sub.append_row(["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     all_values = ws_sub.get_all_values()
@@ -196,6 +192,7 @@ def save_single_row(row_data, original_key=None):
     
     headers = all_values[0]
     
+    # 防呆：確保 uuid 存在
     if "uuid" not in headers:
         ws_sub.clear() 
         headers = ["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"]
@@ -206,10 +203,14 @@ def save_single_row(row_data, original_key=None):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_uuid = row_data.get('uuid')
     
+    # 這裡的字典對應要非常小心，確保寫入順序正確
     data_dict = {
         "uuid": target_uuid,
         "填報時間": timestamp,
-        "科別": row_data['科別'], "學期": row_data['學期'], "年級": row_data['年級'], "課程名稱": row_data['課程名稱'],
+        "科別": row_data['科別'], 
+        "學期": row_data['學期'], 
+        "年級": row_data['年級'], 
+        "課程名稱": row_data['課程名稱'],
         "教科書(1)": row_data['教科書(優先1)'], "冊次(1)": row_data['冊次(1)'], "出版社(1)": row_data['出版社(1)'], "字號(1)": row_data['審定字號(1)'],
         "教科書(2)": row_data['教科書(優先2)'], "冊次(2)": row_data['冊次(2)'], "出版社(2)": row_data['出版社(2)'], "字號(2)": row_data['審定字號(2)'],
         "適用班級": row_data['適用班級'], "備註": row_data['備註']
@@ -218,6 +219,7 @@ def save_single_row(row_data, original_key=None):
     row_to_write = []
     for h in headers:
         val = ""
+        # 處理別名對應
         if h in data_dict: val = data_dict[h]
         elif h == "字號" or h == "審定字號": val = data_dict.get("字號(1)", "")
         elif h == "教科書": val = data_dict.get("教科書(1)", "")
@@ -227,6 +229,7 @@ def save_single_row(row_data, original_key=None):
 
     target_row_index = -1
 
+    # 嘗試用 UUID 更新舊資料
     if target_uuid:
         uuid_col_idx = col_map.get("uuid")
         if uuid_col_idx is not None:
@@ -236,13 +239,14 @@ def save_single_row(row_data, original_key=None):
                     break
 
     if target_row_index > 0:
+        # 更新
         start_col_char = 'A'
         end_col_char = chr(ord('A') + len(headers) - 1) 
         if len(headers) > 26: end_col_char = 'Z' 
-
         range_name = f"{start_col_char}{target_row_index}:{end_col_char}{target_row_index}"
         ws_sub.update(range_name=range_name, values=[row_to_write])
     else:
+        # 新增
         ws_sub.append_row(row_to_write)
         
     return True
@@ -276,7 +280,7 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# --- 5. 產生 HTML 報表 ---
+# --- 5. 產生 HTML 報表 (修正版：上下兩列顯示) ---
 def create_full_report(dept):
     client = get_connection()
     try:
@@ -288,6 +292,7 @@ def create_full_report(dept):
         headers = data[0]
         rows = data[1:]
         
+        # 處理重複標頭
         seen = {}
         new_headers = []
         for col in headers:
@@ -324,7 +329,7 @@ def create_full_report(dept):
     if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
     df = df.sort_values(by='填報時間')
-    # 這裡的去重包含適用班級
+    # 去重
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
     html = f"""
@@ -339,9 +344,10 @@ def create_full_report(dept):
             table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
             th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; vertical-align: middle; }}
             th {{ background-color: #f2f2f2; }}
-            .book-row {{ margin-bottom: 4px; }}
-            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; padding-top: 2px; margin-top: 2px; display: block; }}
+            .book-cell {{ padding: 4px 0; }}
+            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 4px; }}
             .footer {{ margin-top: 30px; text-align: right; }}
+            .page-break {{ page-break-before: always; }}
         </style>
     </head>
     <body>
@@ -377,26 +383,37 @@ def create_full_report(dept):
                     """
                     grade_df = grade_df.sort_values(by='課程名稱')
                     for _, row in grade_df.iterrows():
-                        book2_info = ""
+                        # Helper for cell content
+                        def mk_cell(v1, v2):
+                            v1_s = str(v1) if v1 else ""
+                            if not v2: return f"<div class='book-cell'>{v1_s}</div>"
+                            v2_s = str(v2) if v2 else ""
+                            return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
+
                         b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
-                        if b2:
-                            v2 = row.get('冊次(2)', '')
-                            p2 = row.get('出版社(2)', '')
-                            book2_info = f"<br><span style='color:blue; font-size:0.9em'>(2) {b2} / {v2} / {p2}</span>"
+                        v2 = row.get('冊次(2)', '')
+                        p2 = row.get('出版社(2)', '')
+                        c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
                         
                         b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
                         v1 = row.get('冊次(1)', '')
                         p1 = row.get('出版社(1)', '')
                         c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
                         
+                        # 處理上下兩列顯示
+                        book_cell = mk_cell(b1, b2)
+                        vol_cell = mk_cell(v1, v2)
+                        pub_cell = mk_cell(p1, p2)
+                        code_cell = mk_cell(c1, c2)
+                        
                         html += f"""
                             <tr>
                                 <td>{row['課程名稱']}</td>
                                 <td>{row['適用班級']}</td>
-                                <td>{b1}{book2_info}</td>
-                                <td>{v1}</td>
-                                <td>{p1}</td>
-                                <td>{c1}</td>
+                                <td>{book_cell}</td>
+                                <td>{vol_cell}</td>
+                                <td>{pub_cell}</td>
+                                <td>{code_cell}</td>
                                 <td>{row.get('備註', '')}</td>
                             </tr>
                         """
@@ -426,13 +443,10 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     if not prefix: return []
     suffixes = []
     
-    # 修改：如果是專業科系，只抓該科；否則抓全校該學制
     if dept in DEPT_SPECIFIC_CONFIG:
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
-        # 共同科目 (或未定義科別)，預設抓全校該學制
         suffixes = ALL_SUFFIXES.get(sys_name, [])
-        
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
@@ -445,23 +459,15 @@ def update_class_list_from_checkboxes():
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
         target_classes = get_target_classes_for_dept(dept, grade, sys_name)
-        
         if is_checked:
-            # 加入：把這些班級加進 current_list (如果不重複)
             for c in target_classes:
-                if c not in current_list:
-                    current_list.append(c)
+                if c not in current_list: current_list.append(c)
         else:
-            # 移除：把這些班級移出
             for c in target_classes:
-                if c in current_list:
-                    current_list.remove(c)
+                if c in current_list: current_list.remove(c)
     
-    # 關鍵修正：同時更新 active_classes 和 Widget 的 key (class_multiselect)
-    final_list = sorted(list(set(current_list)))
-    st.session_state['active_classes'] = final_list
-    st.session_state['class_multiselect'] = final_list 
-
+    st.session_state['active_classes'] = sorted(list(set(current_list)))
+    
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -478,7 +484,6 @@ def on_multiselect_change():
     st.session_state['active_classes'] = st.session_state['class_multiselect']
 
 def on_editor_change():
-    """當表格勾選變動時觸發"""
     key = f"main_editor_{st.session_state['editor_key_counter']}"
     if key not in st.session_state: return
 
@@ -497,7 +502,6 @@ def on_editor_change():
         
         row_data = st.session_state['data'].iloc[target_idx]
         
-        # 記錄原始 key (包含 UUID)
         st.session_state['original_key'] = {
             '科別': row_data['科別'],
             '年級': str(row_data['年級']),
@@ -514,18 +518,16 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 關鍵修正：將班級字串解析並正確填入 active_classes
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
         grade = st.session_state.get('grade_val')
-        # 這裡不進行過濾，直接填入，因為這是資料庫裡的既有資料
-        # 但為了確保 multiselect 不報錯，我們需要在顯示時把這些班級加到 options 裡
+        valid_classes = get_all_possible_classes(grade) if grade else []
+        final_list = [c for c in class_list if c in valid_classes]
         
-        st.session_state['active_classes'] = class_list
-        st.session_state['class_multiselect'] = class_list
+        st.session_state['active_classes'] = final_list
+        st.session_state['class_multiselect'] = final_list
 
-        # 重置 Checkbox
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
@@ -554,7 +556,6 @@ def auto_load_data():
         st.session_state['current_uuid'] = None
         st.session_state['active_classes'] = []
         
-        # 預設勾選
         if dept not in DEPT_SPECIFIC_CONFIG:
             st.session_state['cb_reg'] = True
             st.session_state['cb_prac'] = True
@@ -723,12 +724,12 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            # 關鍵修正：確保 default 值在 options 裡
-            final_options = sorted(list(set(all_possible + st.session_state['active_classes'])))
+            valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
+            st.session_state['active_classes'] = valid_active
             
             selected_classes = st.multiselect(
                 "最終班級列表:",
-                options=final_options,
+                options=all_possible,
                 default=st.session_state['active_classes'],
                 key="class_multiselect",
                 on_change=on_multiselect_change
