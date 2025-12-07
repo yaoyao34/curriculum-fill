@@ -7,6 +7,55 @@ import json
 import base64
 import uuid
 
+def safe_note(row):
+    """
+    最終穩定版 v2：
+    - 自動抓所有「備註」欄位
+    - 處理 Series
+    - 用 replace 清掉 備註1/2
+    - 移除 dtype 尾巴
+    - ✅ 若 r1 == r2，自動清空 r2（避免雙重顯示）
+    """
+
+    note_cols = [c for c in row.index if "備註" in str(c)]
+
+    notes = []
+
+    for col in note_cols:
+        val = row[col]
+
+        if isinstance(val, pd.Series):
+            if not val.empty:
+                val = val.iloc[0]
+            else:
+                val = ""
+
+        if val is None or str(val).lower() == "nan":
+            val = ""
+
+        val = str(val)
+
+        # 強制移除 備註1 / 備註2
+        val = val.replace("備註1", "").replace("備註2", "")
+
+        # 強制移除 Name: 0, dtype: object
+        if "dtype" in val:
+            val = val.split("Name:")[0]
+
+        val = val.replace("\n", " ").strip()
+
+        notes.append(val)
+
+    r1 = notes[0] if len(notes) > 0 else ""
+    r2 = notes[1] if len(notes) > 1 else ""
+
+    # ✅ ✅ ✅ 重點修正：如果 r1 == r2，視為只有一則備註
+    if r1 and r2 and r1 == r2:
+        r2 = ""
+
+    return [r1, r2]
+
+
 # --- NEW: Import FPDF for PDF generation
 from fpdf import FPDF 
 
@@ -125,13 +174,12 @@ def load_data(dept, semester, grade):
     def safe_get_value(row, key, default=''):
         val = row.get(key, default)
         
-        # 這是防止 Pandas 將空欄位讀成 Series 的核心修正
         if isinstance(val, pd.Series):
             try:
                 # 嘗試取出 Series 的第一個元素
+                # 如果 Series 是空的，iloc[0] 會拋出 IndexError，被 except 捕獲
                 val = val.iloc[0]
             except IndexError:
-                # 如果是空 Series，則返回 default
                 val = default
         
         # 確保最終結果是字串
@@ -378,7 +426,8 @@ def create_pdf_report(dept):
                 elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                 elif c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 # --- 處理備註欄位名稱 (與 load_data 邏輯一致) ---
-                elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
+                #elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
+                elif c.startswith('備註'): new_name = c
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
@@ -388,10 +437,13 @@ def create_pdf_report(dept):
                 elif c == '出版社': new_headers.append('出版社(1)')
                 elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
                 # --- 處理備註欄位名稱 ---
-                elif c == '備註' or c.startswith('備註'): new_headers.append('備註1')
+                #elif c == '備註' or c.startswith('備註'): new_headers.append('備註1')
+                elif c.startswith('備註'): new_headers.append(c)
                 else: new_headers.append(c)
         
         df_full = pd.DataFrame(rows, columns=new_headers)
+        #st.write("✅ PDF 欄位實際名稱：", df_full.columns.tolist())
+
         
         if df_full.empty: return None
 
@@ -475,13 +527,13 @@ def create_pdf_report(dept):
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
                 # 備註欄位：確保只從 DF 中取出值
-                r1 = str(row.get('備註1', '')).strip() 
+                r1, r2 = safe_note(row)
                 
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
-                r2 = str(row.get('備註2', '')).strip()
+                #r2 = safe_note(row[note_cols[1]])
                 
                 # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
@@ -1109,3 +1161,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
