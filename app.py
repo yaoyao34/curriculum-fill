@@ -435,7 +435,7 @@ def create_pdf_report(dept):
             # 使用已註冊的字體
             self.set_font(CHINESE_FONT, 'B', 16) 
             self.cell(0, 10, f'{dept} 114學年度 教科書選用總表', 0, 1, 'C')
-            self.set_font(CHINESE_FONT, '', 10)
+            self.set_font(CHINESE_FONT, '', 8)
             self.cell(0, 5, f"列印時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", 0, 1, 'R')
             self.ln(5)
 
@@ -613,7 +613,7 @@ def create_pdf_report(dept):
                 # 2. 檢查是否需要換頁
                 if pdf.get_y() + row_height > pdf.page_break_trigger:
                     pdf.add_page()
-                    pdf.set_font(CHINESE_FONT, 'B', 12)
+                    pdf.set_font(CHINESE_FONT, 'B', 10)
                     pdf.set_fill_color(200, 220, 255)
                     pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
                     render_table_header(pdf)
@@ -627,7 +627,7 @@ def create_pdf_report(dept):
                     pdf.set_xy(start_x, start_y)
                     pdf.cell(w, row_height, "", 1, 0, 'L')
                     
-                    pdf.set_font(CHINESE_FONT, '', 8)
+                    pdf.set_font(CHINESE_FONT, '', 10)
                     
                     if i in [2, 3, 4, 5, 6]: # 雙行合併欄位
                         y_offset = (row_height - base_height) / 2 + 0.5
@@ -1184,6 +1184,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
