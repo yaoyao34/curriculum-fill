@@ -8,8 +8,9 @@ import base64
 import uuid
 
 # --- NEW: Import FPDF for PDF generation
-# 注意: 部署時需確保環境安裝 'pip install fpdf2'
 from fpdf import FPDF 
+
+# (保持所有全域設定不變)
 
 # --- 全域設定 ---
 SPREADSHEET_NAME = "教科書填報" 
@@ -32,7 +33,7 @@ DEPT_SPECIFIC_CONFIG = {
     "製圖科": { "普通科": ["製圖"], "建教班": [], "實用技能班": [] }
 }
 
-# --- 1. 連線設定 ---
+# (保持 get_connection, load_data, get_course_list, save_single_row, delete_row_from_db 不變)
 @st.cache_resource
 def get_connection():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -294,20 +295,22 @@ def create_pdf_report(dept):
     返回 PDF 內容的 bytes。
     """
     
+    # 定義字體名稱
+    CHINESE_FONT = 'NotoSans' 
+    
     # 內部類別用於自訂 PDF 頁首/頁尾
     class PDF(FPDF):
         def header(self):
-            # 注意：為支援中文，用戶需自行註冊中文字體（例如 NotoSansCJK），否則中文會亂碼或不顯示。
-            # 實際使用時，請將 'Helvetica' 替換為已註冊的中文字體名稱。
-            self.set_font('Helvetica', 'B', 16) 
+            # 使用已註冊的字體
+            self.set_font(CHINESE_FONT, 'B', 16) 
             self.cell(0, 10, f'{dept} 114學年度 教科書選用總表', 0, 1, 'C')
-            self.set_font('Helvetica', '', 10)
+            self.set_font(CHINESE_FONT, '', 10)
             self.cell(0, 5, f"列印時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", 0, 1, 'R')
             self.ln(5)
 
         def footer(self):
             self.set_y(-15)
-            self.set_font('Helvetica', 'I', 8)
+            self.set_font(CHINESE_FONT, 'I', 8)
             self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'C')
             
     # --- 1. 資料讀取與處理 ---
@@ -365,13 +368,21 @@ def create_pdf_report(dept):
     # --- 2. PDF 生成 ---
     pdf = PDF(orientation='L', unit='mm', format='A4') # 橫向 A4
     pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # 註冊中文字體 - 這是解決中文顯示的關鍵步驟
+    try:
+        # 假設您的中文字體檔名為 NotoSansCJKtc-Regular.ttf
+        # 確保此文件已上傳至專案根目錄
+        pdf.add_font(CHINESE_FONT, '', 'NotoSansCJKtc-Regular.ttf', uni=True) 
+        pdf.add_font(CHINESE_FONT, 'B', 'NotoSansCJKtc-Regular.ttf', uni=True) # 粗體也使用同一個檔案
+        pdf.add_font(CHINESE_FONT, 'I', 'NotoSansCJKtc-Regular.ttf', uni=True) # 斜體也使用同一個檔案
+    except Exception as e:
+        # 如果找不到字體，退回到 Helvetica，但中文會無法顯示
+        st.warning(f"🚨 警告: 無法載入中文字體 NotoSansCJKtc-Regular.ttf ({e})。中文將無法顯示。請確保檔案已存在。")
+        CHINESE_FONT = 'Helvetica'
+        
     pdf.add_page()
     
-    # 給用戶的字體提示 (中文必須要這一步)
-    pdf.set_font('Helvetica', '', 8)
-    pdf.cell(0, 5, "NOTE: For proper Chinese display, please register a CJK font (e.g., pdf.add_font('NotoSans', '', 'NotoSansCJKsc-Regular.ttf', uni=True)) and use it.", 0, 1)
-    pdf.ln(2)
-
     # 定義表格欄位與寬度 (總寬度 259mm)
     col_widths = [30, 25, 30, 12, 20, 25, 30, 12, 20, 25, 30] 
     col_names = [
@@ -383,7 +394,7 @@ def create_pdf_report(dept):
     
     def render_table_header(pdf):
         """繪製表格標頭，支援 MultiCell 換行"""
-        pdf.set_font('Helvetica', 'B', 9) 
+        pdf.set_font(CHINESE_FONT, 'B', 9) 
         pdf.set_fill_color(220, 220, 220)
         start_x = pdf.get_x()
         start_y = pdf.get_y()
@@ -393,16 +404,16 @@ def create_pdf_report(dept):
             pdf.multi_cell(w, 7, name, 1, 'C', 1) 
             start_x += w
         pdf.set_xy(pdf.l_margin, start_y + 7) # 移至下一行
-        pdf.set_font('Helvetica', '', 8) # 切回內文文字
+        pdf.set_font(CHINESE_FONT, '', 8) # 切回內文文字
         
     # 依學期和年級分組繪製表格
-    pdf.set_font('Helvetica', '', 8)
+    pdf.set_font(CHINESE_FONT, '', 8)
     
     for sem in sorted(df['學期'].unique()):
         sem_df = df[df['學期'] == sem]
         
         # 學期標頭
-        pdf.set_font('Helvetica', 'B', 12)
+        pdf.set_font(CHINESE_FONT, 'B', 12)
         pdf.set_fill_color(200, 220, 255)
         pdf.cell(0, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
         
@@ -410,7 +421,7 @@ def create_pdf_report(dept):
             grade_df = sem_df[sem_df['年級'] == str(g)]
             if not grade_df.empty:
                 # 年級標頭
-                pdf.set_font('Helvetica', 'B', 10)
+                pdf.set_font(CHINESE_FONT, 'B', 10)
                 pdf.cell(0, 7, f"【{g} 年級】", 0, 1, 'L')
                 
                 grade_df = grade_df.sort_values(by='課程名稱')
@@ -429,8 +440,9 @@ def create_pdf_report(dept):
                     
                     # 1. 計算最大行高 (用於 MultiCell 換行)
                     max_row_height = 0
-                    pdf.set_font('Helvetica', '', 8)
+                    pdf.set_font(CHINESE_FONT, '', 8)
                     for w, text in zip(col_widths, data_row_to_write):
+                        # 粗略計算行數
                         num_lines = pdf.get_string_width(str(text)) // (w * 0.9) + 1 
                         max_row_height = max(max_row_height, num_lines * 4.5) 
                     
@@ -439,10 +451,10 @@ def create_pdf_report(dept):
                     # 2. 檢查是否需要換頁
                     if pdf.get_y() + row_height > pdf.page_break_trigger:
                         pdf.add_page()
-                        pdf.set_font('Helvetica', 'B', 12)
+                        pdf.set_font(CHINESE_FONT, 'B', 12)
                         pdf.set_fill_color(200, 220, 255)
                         pdf.cell(0, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
-                        pdf.set_font('Helvetica', 'B', 10)
+                        pdf.set_font(CHINESE_FONT, 'B', 10)
                         pdf.cell(0, 7, f"【{g} 年級】 (續)", 0, 1, 'L')
                         render_table_header(pdf)
                         
@@ -465,7 +477,7 @@ def create_pdf_report(dept):
                         # 欄位對齊方式: 窄欄位居中，寬欄位靠左
                         align = 'C' if w < 25 and i not in [1, 6, 10] else 'L'
 
-                        pdf.set_font('Helvetica', '', 8)
+                        pdf.set_font(CHINESE_FONT, '', 8)
                         pdf.multi_cell(w, 4.5, str(text), 0, align, 0)
                         
                         # 手動移動 X 座標
@@ -478,7 +490,7 @@ def create_pdf_report(dept):
     
     
     # 頁尾簽名區
-    pdf.set_font('Helvetica', '', 10)
+    pdf.set_font(CHINESE_FONT, '', 10)
     pdf.ln(10)
     
     is_vocational = dept in DEPT_SPECIFIC_CONFIG
@@ -496,7 +508,7 @@ def create_pdf_report(dept):
     # 返回 PDF 內容 (bytes)
     return pdf.output(dest='S').encode('latin-1')
 
-# --- 6. 班級計算邏輯 (核心修正區) ---
+# (保持 get_all_possible_classes, get_target_classes_for_dept, update_class_list_from_checkboxes, toggle_all_checkboxes, on_multiselect_change, on_editor_change, auto_load_data 不變)
 def get_all_possible_classes(grade):
     """取得該年級全校所有可能的班級"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
