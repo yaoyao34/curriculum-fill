@@ -6,6 +6,7 @@ import datetime
 import json
 import base64
 import uuid
+import math
 
 def safe_note(row):
     """
@@ -418,9 +419,7 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# --- 5. 產生 PDF 報表 ---
-# --- 5. 產生 PDF 報表 (修正版：直向 A4 + 自動縮放欄寬) ---
-# --- 5. 產生 PDF 報表 (修正版：直向 A4 + 自動縮放欄寬) ---
+# --- 5. 產生 PDF 報表 (v3：直向 + 自動換行 + 動態高度) ---
 def create_pdf_report(dept):
     """
     從 Google Sheet 抓取該科別所有資料 (Submission_Records)，並使用 FPDF 生成 PDF 報表。
@@ -500,7 +499,7 @@ def create_pdf_report(dept):
         return None
         
     # --- 2. PDF 生成 ---
-    # 🌟 修改 1: orientation='P' (Portrait 直向)
+    # 直向 A4
     pdf = PDF(orientation='P', unit='mm', format='A4') 
     pdf.set_auto_page_break(auto=True, margin=15)
     
@@ -514,10 +513,9 @@ def create_pdf_report(dept):
         
     pdf.add_page()
     
-    # --- 🌟 修改 2: 欄位寬度調整 (總寬度約 190mm 以符合 A4 直向) ---
-    # 比例重新分配以適應直向頁面
-    col_widths = [20, 51, 36, 10, 17, 22, 36] 
-    # [課程, 班級, 書名, 冊, 出版, 字號, 備註]
+    # --- 欄位寬度 (直向 A4 優化版) ---
+    # 總寬 190mm
+    col_widths = [21, 55, 28, 10, 17, 24, 35] 
     
     col_names = [
         "課程名稱", "適用班級", 
@@ -528,21 +526,23 @@ def create_pdf_report(dept):
     TOTAL_TABLE_WIDTH = sum(col_widths)
     
     def render_table_header(pdf):
-        """繪製表格標頭，支援 MultiCell 換行"""
+        """繪製表格標頭"""
         pdf.set_font(CHINESE_FONT, 'B', 9) 
         pdf.set_fill_color(220, 220, 220)
         start_x = pdf.get_x()
         start_y = pdf.get_y()
-        # 使用 MultiCell 繪製標頭
         for w, name in zip(col_widths, col_names):
             pdf.set_xy(start_x, start_y)
             pdf.multi_cell(w, 7, name, 1, 'C', 1) 
             start_x += w
-        pdf.set_xy(pdf.l_margin, start_y + 7) # 移至下一行
-        pdf.set_font(CHINESE_FONT, '', 8) # 切回內文文字
+        pdf.set_xy(pdf.l_margin, start_y + 7) 
+        pdf.set_font(CHINESE_FONT, '', 8) 
         
     # 依學期和年級分組繪製表格
     pdf.set_font(CHINESE_FONT, '', 8)
+    
+    # 定義行高常數
+    LINE_HEIGHT = 4.5
     
     for sem in sorted(df['學期'].unique()):
         sem_df = df[df['學期'] == sem].copy()
@@ -564,7 +564,6 @@ def create_pdf_report(dept):
                 v1 = str(row.get('冊次(1)', '')).strip()
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
-                # 備註欄位
                 r1, r2 = safe_note(row)
                 
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
@@ -572,19 +571,14 @@ def create_pdf_report(dept):
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
                 
-                # 輔助函式：換行顯示
+                # 輔助函式：換行顯示 (不變)
                 def format_combined_cell(val1, val2):
                     val1 = val1 if val1 else ""
                     val2 = val2 if val2 else ""
-                    
-                    if not val1 and not val2:
-                        return ""
-                    elif not val2:
-                        return val1
-                    elif not val1:
-                        return val2
-                    else:
-                        return f"{val1}\n{val2}"
+                    if not val1 and not val2: return ""
+                    elif not val2: return val1
+                    elif not val1: return val2
+                    else: return f"{val1}\n{val2}"
                 
                 data_row_to_write = [
                     str(row['課程名稱']),
@@ -596,22 +590,48 @@ def create_pdf_report(dept):
                     format_combined_cell(r1, r2) 
                 ]
                 
-                # 1. 計算最大行高 (用於 MultiCell 換行)
+                # --- 核心修正：動態計算每一格需要的高度 ---
                 pdf.set_font(CHINESE_FONT, '', 8)
                 
-                base_height = 9.0 
+                cell_line_counts = [] # 儲存每一格需要的「行數」
                 
-                # 計算適用班級行高
-                class_width = col_widths[1]
-                class_text = str(data_row_to_write[1])
-                class_height = 4.5
-                if class_text:
-                    num_lines_class = pdf.get_string_width(class_text) // (class_width * 0.9) + 1
-                    class_height = num_lines_class * 4.5
+                for i, (w, text) in enumerate(zip(col_widths, data_row_to_write)):
+                    # 先將手動換行符號 (\n) 切開
+                    segments = str(text).split('\n')
+                    total_lines_for_cell = 0
+                    
+                    for seg in segments:
+                        # 扣除左右 padding (2mm) 後的可用寬度
+                        safe_width = w - 2
+                        if safe_width < 1: safe_width = 1
+                        
+                        # 取得這段文字的寬度
+                        txt_width = pdf.get_string_width(seg)
+                        
+                        # 計算這段文字會折成幾行
+                        if txt_width > 0:
+                            # 無條件進位
+                            lines_needed = math.ceil(txt_width / safe_width)
+                        else:
+                            # 空行算 1 行，避免高度過小
+                            lines_needed = 1 
+                            if not seg and len(segments) == 1 and text == "": lines_needed = 0 # 完全空白格
+                            
+                        total_lines_for_cell += lines_needed
+                    
+                    # 每一格至少要有一行的高度，避免計算錯誤
+                    if total_lines_for_cell < 1: total_lines_for_cell = 1
+                    cell_line_counts.append(total_lines_for_cell)
                 
-                row_height = max(base_height, class_height, 7.0) 
+                # 找出這一列中，最高的那個格子需要幾行
+                max_lines_in_row = max(cell_line_counts)
                 
-                # 2. 檢查是否需要換頁
+                # 計算最終列高 (行數 * 行高 + 上下 Padding 3mm)
+                # 如果只有1行，高度給 7mm 比較好看；多行則依計算
+                calculated_height = max_lines_in_row * LINE_HEIGHT + 3
+                row_height = max(calculated_height, 8.0)
+                
+                # --- 換頁檢查 ---
                 if pdf.get_y() + row_height > pdf.page_break_trigger:
                     pdf.add_page()
                     pdf.set_font(CHINESE_FONT, 'B', 12)
@@ -619,35 +639,33 @@ def create_pdf_report(dept):
                     pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
                     render_table_header(pdf)
                     
-                # 3. 繪製儲存格
+                # --- 繪製儲存格 ---
                 start_x = pdf.get_x()
                 start_y = pdf.get_y()
                 
                 for i, (w, text) in enumerate(zip(col_widths, data_row_to_write)):
                     
+                    # 1. 先畫外框 (高度統一)
                     pdf.set_xy(start_x, start_y)
                     pdf.cell(w, row_height, "", 1, 0, 'L')
                     
+                    # 2. 計算內容垂直置中位置
+                    # 該格的實際內容高度
+                    this_cell_content_height = cell_line_counts[i] * LINE_HEIGHT
+                    y_pos = start_y + (row_height - this_cell_content_height) / 2
+                    
+                    # 3. 寫入文字 (使用 MultiCell 自動換行)
+                    pdf.set_xy(start_x, y_pos)
                     pdf.set_font(CHINESE_FONT, '', 8)
                     
-                    if i in [2, 3, 4, 5, 6]: # 雙行合併欄位
-                        y_offset = (row_height - base_height) / 2 + 0.5
-                        pdf.set_xy(start_x, start_y + y_offset)
-                        
-                        align = 'C' if i == 3 else 'L' 
-                        
-                        pdf.multi_cell(w, 4.0, str(text), 0, align, 0)
-                    else: # 單行/多行，垂直置中
-                        
-                        num_lines_in_cell = (pdf.get_string_width(str(text)) // (w * 0.9) + 1)
-                        y_pos = start_y + (row_height - num_lines_in_cell * 4.5) / 2
-                        pdf.set_xy(start_x, y_pos) 
-                        
-                        align = 'L'
-                        pdf.multi_cell(w, 4.5, str(text), 0, align, 0)
+                    align = 'C' if i == 3 else 'L' # 冊次居中，其他靠左
+                    
+                    # MultiCell 會自動處理 \n 和自動換行
+                    pdf.multi_cell(w, LINE_HEIGHT, str(text), 0, align, 0)
                         
                     start_x += w 
                 
+                # 移動到下一列的 Y
                 pdf.set_y(start_y + row_height)
                     
             pdf.ln(5) 
@@ -1185,6 +1203,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
