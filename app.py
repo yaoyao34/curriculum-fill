@@ -676,7 +676,7 @@ def create_pdf_report(dept):
     pdf.ln(10)
     
     is_vocational = dept in DEPT_SPECIFIC_CONFIG
-    footer_text = ["填表人：", "召集人：", "教務主任："]
+    footer_text = [ "召集人：", "教務主任："]
     if is_vocational:
         footer_text.append("實習主任：")
     footer_text.append("校長：")
@@ -1203,6 +1203,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
