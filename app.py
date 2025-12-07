@@ -134,9 +134,8 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 嘗試找完全對應班級的
+                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
-                
                 if not exact_match.empty:
                     target_rows = exact_match
                 else:
@@ -551,7 +550,6 @@ def main():
     """, unsafe_allow_html=True)
 
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
-    if 'original_key' not in st.session_state: st.session_state['original_key'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
     if 'form_data' not in st.session_state:
         st.session_state['form_data'] = {
@@ -679,8 +677,8 @@ def main():
             if is_edit_mode:
                 if st.button("🔄 更新表格 (存檔)", type="primary", use_container_width=True):
                     # 班級必填檢查
-                    if not input_class_str:
-                        st.error("⚠️ 適用班級為必填！")
+                    if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
+                         st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
                         idx = st.session_state['edit_index']
                         new_row = {
@@ -713,8 +711,8 @@ def main():
             else:
                 if st.button("➕ 加入表格 (存檔)", type="primary", use_container_width=True):
                     # 班級必填檢查
-                    if not input_class_str:
-                        st.error("⚠️ 適用班級為必填！")
+                    if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
+                         st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
                         new_row = {
                             "勾選": False,
