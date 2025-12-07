@@ -136,6 +136,7 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 target_rows = exact_match if not exact_match.empty else hist_matches
 
@@ -242,7 +243,7 @@ def save_single_row(row_data, original_key=None):
         
     return True
 
-# --- 4.5 刪除功能 ---
+# --- 4.5 刪除功能 (UUID 刪除) ---
 def delete_row_from_db(target_uuid):
     if not target_uuid: return False
     
@@ -319,7 +320,11 @@ def create_full_report(dept):
     if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
     df = df.sort_values(by='填報時間')
+    # 去重
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
+    
+    # 判斷科別是否為專業科系
+    is_vocational = dept in DEPT_SPECIFIC_CONFIG
     
     html = f"""
     <html>
@@ -335,7 +340,8 @@ def create_full_report(dept):
             th {{ background-color: #f2f2f2; }}
             .book-cell {{ padding: 4px 0; }}
             .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 4px; }}
-            .footer {{ margin-top: 30px; text-align: right; }}
+            .footer {{ margin-top: 50px; display: flex; justify-content: space-between; }}
+            .footer div {{ width: 24%; border-bottom: 1px solid black; padding-bottom: 5px; text-align: left; }}
         </style>
     </head>
     <body>
@@ -371,21 +377,23 @@ def create_full_report(dept):
                     """
                     grade_df = grade_df.sort_values(by='課程名稱')
                     for _, row in grade_df.iterrows():
+                        # 使用多種可能的 key 名稱來抓資料，確保萬無一失
+                        b1 = row.get('教科書(优先1)') or row.get('教科書(1)') or row.get('教科書') or ''
+                        v1 = row.get('冊次(1)') or row.get('冊次') or ''
+                        p1 = row.get('出版社(1)') or row.get('出版社') or ''
+                        c1 = row.get('審定字號(1)') or row.get('字號(1)') or row.get('字號') or ''
+                        
+                        b2 = row.get('教科書(优先2)') or row.get('教科書(2)') or ''
+                        v2 = row.get('冊次(2)') or ''
+                        p2 = row.get('出版社(2)') or ''
+                        c2 = row.get('審定字號(2)') or row.get('字號(2)') or ''
+                        
+                        # 建構儲存格內容
                         def mk_cell(v1, v2):
                             v1_s = str(v1) if v1 else ""
                             if not v2: return f"<div class='book-cell'>{v1_s}</div>"
                             v2_s = str(v2) if v2 else ""
                             return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
-
-                        b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
-                        v2 = row.get('冊次(2)', '')
-                        p2 = row.get('出版社(2)', '')
-                        c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
-                        
-                        b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
-                        v1 = row.get('冊次(1)', '')
-                        p1 = row.get('出版社(1)', '')
-                        c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
                         
                         book_cell = mk_cell(b1, b2)
                         vol_cell = mk_cell(v1, v2)
@@ -405,9 +413,18 @@ def create_full_report(dept):
                         """
                     html += "</tbody></table>"
 
+    # 簽章區塊
     html += """
         <div class="footer">
-            <p>填表人簽章：____________________ &nbsp;&nbsp;&nbsp; 科主任簽章：____________________</p>
+            <div>填表人簽章：</div>
+            <div>召集人：</div>
+            <div>教務主任：</div>
+    """
+    if is_vocational:
+        html += "<div>實習主任：</div>"
+    
+    html += """
+            <div>校長：</div>
         </div>
     </body>
     </html>
@@ -429,14 +446,10 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     if not prefix: return []
     suffixes = []
     
-    # 修正重點：判斷是否為專業科系
     if dept in DEPT_SPECIFIC_CONFIG:
-        # 專業科系：只抓該科設定
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
-        # 共同科目：抓全校該學制設定
         suffixes = ALL_SUFFIXES.get(sys_name, [])
-        
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
@@ -444,7 +457,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    current_list = list(st.session_state.get('class_multiselect', []))
+    current_list = list(st.session_state.get('active_classes', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
@@ -456,10 +469,8 @@ def update_class_list_from_checkboxes():
             for c in target_classes:
                 if c in current_list: current_list.remove(c)
     
-    final_list = sorted(list(set(current_list)))
-    st.session_state['active_classes'] = final_list
-    st.session_state['class_multiselect'] = final_list 
-
+    st.session_state['active_classes'] = sorted(list(set(current_list)))
+    
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -512,7 +523,6 @@ def on_editor_change():
         
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
@@ -520,23 +530,10 @@ def on_editor_change():
         st.session_state['active_classes'] = final_list
         st.session_state['class_multiselect'] = final_list
 
-        # 反推 Checkbox 狀態邏輯 (修正版)
-        dept = st.session_state.get('dept_val')
-        
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
-        
-        reg_targets = get_target_classes_for_dept(dept, grade, "普通科")
-        prac_targets = get_target_classes_for_dept(dept, grade, "實用技能班")
-        coop_targets = get_target_classes_for_dept(dept, grade, "建教班")
-        
-        # 只要 final_list 中包含任一個該學制的班級，就勾選
-        if reg_targets and any(c in final_list for c in reg_targets): st.session_state['cb_reg'] = True
-        if prac_targets and any(c in final_list for c in prac_targets): st.session_state['cb_prac'] = True
-        if coop_targets and any(c in final_list for c in coop_targets): st.session_state['cb_coop'] = True
-        
-        st.session_state['cb_all'] = (st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop'])
+        st.session_state['cb_all'] = False
     
     else:
         current_idx = st.session_state.get('edit_index')
@@ -561,19 +558,16 @@ def auto_load_data():
         st.session_state['current_uuid'] = None
         st.session_state['active_classes'] = []
         
-        # 預設勾選
         if dept not in DEPT_SPECIFIC_CONFIG:
-            # 共同科目: 預設全勾
             st.session_state['cb_reg'] = True
             st.session_state['cb_prac'] = True
             st.session_state['cb_coop'] = True
             st.session_state['cb_all'] = True
         else:
-            # 專業科目: 預設全勾
             st.session_state['cb_reg'] = True
-            st.session_state['cb_prac'] = True
-            st.session_state['cb_coop'] = True
-            st.session_state['cb_all'] = True
+            st.session_state['cb_prac'] = False
+            st.session_state['cb_coop'] = False
+            st.session_state['cb_all'] = False
             
         update_class_list_from_checkboxes()
         st.session_state['editor_key_counter'] += 1
@@ -632,7 +626,6 @@ def main():
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
     if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
-    
     if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
     with st.sidebar:
@@ -662,7 +655,6 @@ def main():
             header_text = f"2. 修改第 {st.session_state['edit_index'] + 1} 列" if is_edit_mode else "2. 新增/插入課程"
             st.subheader(header_text)
             
-            # 刪除按鈕
             if is_edit_mode:
                 c_cancel, c_del = st.columns([1, 1])
                 with c_cancel:
@@ -748,7 +740,6 @@ def main():
 
             if is_edit_mode:
                 if st.button("🔄 更新表格 (存檔)", type="primary", use_container_width=True):
-                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                          st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
@@ -789,7 +780,6 @@ def main():
                         st.rerun()
             else:
                 if st.button("➕ 加入表格 (存檔)", type="primary", use_container_width=True):
-                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                          st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
