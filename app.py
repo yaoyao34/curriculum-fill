@@ -60,44 +60,6 @@ def get_connection():
             return None
     return gspread.authorize(creds)
 
-def safe_note(row, *keys):
-    """
-    從 row 中依序嘗試多個 key 取值，
-    並安全處理：
-    - Series（只取第一個）
-    - None / 空值
-    - 開頭多餘的「備註1 / 備註2」
-    """
-    val = ""
-
-    for k in keys:
-        if k in row:
-            candidate = row[k]
-
-            # ✅ 如果是 Series，只取第一格
-            if isinstance(candidate, pd.Series):
-                if not candidate.empty:
-                    candidate = candidate.iloc[0]
-                else:
-                    candidate = ""
-
-            # ✅ 再來才檢查是否為空
-            if candidate not in [None, ""]:
-                val = candidate
-                break
-
-    val = str(val).strip()
-
-    # ✅ 只移除「開頭」的 備註1 / 備註2
-    if val.startswith("備註1"):
-        val = val[len("備註1"):].strip()
-    elif val.startswith("備註2"):
-        val = val[len("備註2"):].strip()
-
-    return val
-
-
-
 # --- 2. 資料讀取 ---
 def load_data(dept, semester, grade):
     client = get_connection()
@@ -159,17 +121,19 @@ def load_data(dept, semester, grade):
 
     display_rows = []
     
-    # --- 修正 2.1: 安全讀取函式，優先使用 iloc[0] 取值 ---
+    # --- 修正 2.1: 修正安全讀取函式，處理 Series 情況 ---
     def safe_get_value(row, key, default=''):
         val = row.get(key, default)
+        
         if isinstance(val, pd.Series):
             try:
-                # 嘗試取出 Series 的第一個元素 (最安全的方式)
+                # 嘗試取出 Series 的第一個元素
+                # 如果 Series 是空的，iloc[0] 會拋出 IndexError，被 except 捕獲
                 val = val.iloc[0]
             except IndexError:
-                # 如果是空 Series，則返回 default
                 val = default
-        # 確保最終是字串
+        
+        # 確保最終結果是字串
         return str(val).strip()
 
     for _, row in target_courses.iterrows():
@@ -188,10 +152,6 @@ def load_data(dept, semester, grade):
                 # --- 修正 2.2: 使用 safe_get_value 讀取備註，避免 Series 錯誤 ---
                 備註1_val = safe_get_value(s_row, '備註1')
                 備註2_val = safe_get_value(s_row, '備註2')
-                
-                # 兼容舊版 '備註' 欄位（如果 '備註1' 不存在且 '備註' 存在）
-                if not 備註1_val and '備註' in s_row.index:
-                     備註1_val = safe_get_value(s_row, '備註')
 
                 display_rows.append({
                     "勾選": False,
@@ -224,9 +184,6 @@ def load_data(dept, semester, grade):
                     # --- 修正 2.3: 使用 safe_get_value 讀取備註，避免 Series 錯誤 ---
                     備註1_val = safe_get_value(h_row, '備註1')
                     備註2_val = safe_get_value(h_row, '備註2')
-                    
-                    if not 備註1_val and '備註' in h_row.index:
-                        備註1_val = safe_get_value(h_row, '備註')
 
                     display_rows.append({
                         "勾選": False,
@@ -517,14 +474,14 @@ def create_pdf_report(dept):
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
                 # 備註欄位：確保只從 DF 中取出值
-               # r1 = str(row.get('備註1', '')).strip() 
-                r1 = safe_note(row, '備註1', '備註(1)', '備註')
+                r1 = str(row.get('備註1', '')).strip() 
+                
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
-                #r2 = str(row.get('備註2', '')).strip()
-                r2 = safe_note(row, '備註2', '備註(2)')
+                r2 = str(row.get('備註2', '')).strip()
+                
                 # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
                     # 確保所有輸入都是非空字串
@@ -1151,12 +1108,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
