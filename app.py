@@ -501,7 +501,7 @@ def create_pdf_report(dept):
     # --- 2. PDF 生成 ---
     # 🌟 修改 1: orientation='P' (Portrait 直向)
     pdf = PDF(orientation='P', unit='mm', format='A4') 
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_auto_page_break(auto=True, margin=10)
     
     try:
         pdf.add_font(CHINESE_FONT, '', 'NotoSansCJKtc-Regular.ttf', uni=True) 
@@ -515,7 +515,7 @@ def create_pdf_report(dept):
     
     # --- 🌟 修改 2: 欄位寬度調整 (總寬度約 190mm 以符合 A4 直向) ---
     # 比例重新分配以適應直向頁面
-    col_widths = [21, 60, 28, 10, 17, 24, 30] 
+    col_widths = [21, 65, 28, 10, 17, 24, 30] 
     # [課程, 班級, 書名, 冊, 出版, 字號, 備註]
     
     col_names = [
@@ -528,7 +528,7 @@ def create_pdf_report(dept):
     
     def render_table_header(pdf):
         """繪製表格標頭，支援 MultiCell 換行"""
-        pdf.set_font(CHINESE_FONT, 'B', 9) 
+        pdf.set_font(CHINESE_FONT, 'B', 12) 
         pdf.set_fill_color(220, 220, 220)
         start_x = pdf.get_x()
         start_y = pdf.get_y()
@@ -1184,6 +1184,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
