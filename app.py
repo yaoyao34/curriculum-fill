@@ -6,6 +6,22 @@ import datetime
 import json
 import base64
 import uuid
+import io
+
+# --- ReportLab PDF 相關匯入 ---
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+# 註冊中文字型 (使用內建的 MSung-Light)
+try:
+    pdfmetrics.registerFont(UnicodeCIDFont('MSung-Light'))
+    FONT_NAME = 'MSung-Light'
+except:
+    FONT_NAME = 'Helvetica' # Fallback (中文會亂碼，但在標準環境下 MSung-Light 應該可用)
 
 # --- 全域設定 ---
 SPREADSHEET_NAME = "教科書填報" 
@@ -201,12 +217,11 @@ def save_single_row(row_data, original_key=None):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_uuid = row_data.get('uuid')
     
-    # 確保順序正確：學期在前，年級在後 (對應 CSV)
     data_dict = {
         "uuid": target_uuid,
         "填報時間": timestamp,
         "科別": row_data['科別'], 
-        "學期": row_data['學期'], 
+        "學期": row_data['學期'], # 修正順序：科別, 學期, 年級
         "年級": row_data['年級'], 
         "課程名稱": row_data['課程名稱'],
         "教科書(1)": row_data['教科書(優先1)'], "冊次(1)": row_data['冊次(1)'], "出版社(1)": row_data['出版社(1)'], "字號(1)": row_data['審定字號(1)'],
@@ -238,6 +253,7 @@ def save_single_row(row_data, original_key=None):
         start_col_char = 'A'
         end_col_char = chr(ord('A') + len(headers) - 1) 
         if len(headers) > 26: end_col_char = 'Z' 
+
         range_name = f"{start_col_char}{target_row_index}:{end_col_char}{target_row_index}"
         ws_sub.update(range_name=range_name, values=[row_to_write])
     else:
@@ -274,18 +290,19 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# --- 5. 產生 HTML 報表 ---
-def create_full_report(dept):
+# --- 5. 產生 PDF 報表 (使用 ReportLab) ---
+def create_pdf_report(dept):
     client = get_connection()
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
         data = ws_sub.get_all_values()
-        if not data: return "<h1>尚無提交資料</h1>"
+        if not data: return None
         
         headers = data[0]
         rows = data[1:]
         
+        # 簡易處理重複標頭
         seen = {}
         new_headers = []
         for col in headers:
@@ -293,146 +310,153 @@ def create_full_report(dept):
             if c in seen:
                 seen[c] += 1
                 new_name = f"{c}({seen[c]})"
+                # 相容處理
+                if c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 if c == '冊次': new_name = f"冊次({seen[c]})"
                 if c == '出版社': new_name = f"出版社({seen[c]})"
                 if c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
-                if c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
-                # 這裡對應 CSV 的標頭
+                # 確保第一個出現的也標準化
                 if c == '教科書(1)': new_headers.append('教科書(優先1)')
                 elif c == '教科書': new_headers.append('教科書(優先1)')
-                elif c == '冊次(1)': new_headers.append('冊次(1)') # 修正讀取key
                 elif c == '冊次': new_headers.append('冊次(1)')
-                elif c == '出版社(1)': new_headers.append('出版社(1)')
                 elif c == '出版社': new_headers.append('出版社(1)')
-                elif c == '字號(1)': new_headers.append('審定字號(1)')
-                elif c == '字號': new_headers.append('審定字號(1)')
-                elif c == '審定字號': new_headers.append('審定字號(1)')
+                elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
                 else: new_headers.append(c)
         
         df = pd.DataFrame(rows, columns=new_headers)
         
     except Exception as e:
-        return f"<h1>讀取失敗：{e}</h1>"
+        st.error(f"報表產生失敗: {e}")
+        return None
     
-    if df.empty:
-        return f"<h1>{dept} 尚無提交資料</h1>"
-        
-    if '年級' in df.columns: df['年級'] = df['年級'].astype(str)
-    if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
+    if df.empty: return None
     
     df = df[df['科別'] == dept]
-    if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
+    if df.empty: return None
     
+    # 排序與去重
     df = df.sort_values(by='填報時間')
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
-    is_vocational = dept in DEPT_SPECIFIC_CONFIG
+    # --- PDF 生成 ---
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
     
-    html = f"""
-    <html>
-    <head>
-        <title>{dept} 教科書選用總表</title>
-        <style>
-            body {{ font-family: 'Microsoft JhengHei', sans-serif; padding: 20px; }}
-            h1 {{ text-align: center; }}
-            h2 {{ background-color: #eee; padding: 5px; border-left: 5px solid #333; }}
-            h3 {{ margin-top: 15px; border-bottom: 1px solid #ccc; }}
-            table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-            th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; vertical-align: middle; }}
-            th {{ background-color: #f2f2f2; }}
-            .book-cell {{ padding: 2px 0; }}
-            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 2px; display: block; }}
-            .footer {{ margin-top: 50px; display: flex; justify-content: space-between; }}
-            .footer div {{ width: 18%; border-bottom: 1px solid black; padding-bottom: 5px; text-align: left; margin-right: 5px; }}
-        </style>
-    </head>
-    <body>
-        <h1>{dept} 114學年度 教科書選用總表</h1>
-        <p style="text-align:center;">列印時間：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
-    """
+    elements = []
     
+    # 樣式
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'Title', parent=styles['Normal'], fontName=FONT_NAME, fontSize=16, alignment=1, spaceAfter=10, leading=20
+    )
+    normal_style = ParagraphStyle(
+        'Normal_TC', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, alignment=0
+    )
+    centered_style = ParagraphStyle(
+        'Centered_TC', parent=styles['Normal'], fontName=FONT_NAME, fontSize=10, alignment=1
+    )
+    
+    # 標題
+    elements.append(Paragraph(f"{dept} 114學年度 教科書選用總表", title_style))
+    elements.append(Paragraph(f"列印時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", centered_style))
+    elements.append(Spacer(1, 10))
+    
+    # 定義表格樣式
+    table_style = TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+    ])
+
+    col_widths = [80, 80, 130, 40, 60, 60, 80] # 調整欄寬
+    
+    # 遍歷學期與年級
     for sem in ['1', '2']:
-        html += f"<h2>第 {sem} 學期</h2>"
+        elements.append(Paragraph(f"<b>第 {sem} 學期</b>", normal_style))
+        elements.append(Spacer(1, 5))
+        
         sem_df = df[df['學期'] == sem]
         
         if sem_df.empty:
-            html += "<p>尚無資料</p>"
-        else:
-            for g in sorted(sem_df['年級'].unique()):
-                grade_df = sem_df[sem_df['年級'] == str(g)]
-                if not grade_df.empty:
-                    html += f"<h3>【{g} 年級】</h3>"
-                    html += """
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width:15%">課程名稱</th>
-                                <th style="width:15%">適用班級</th>
-                                <th style="width:25%">教科書名稱</th>
-                                <th style="width:5%">冊次</th>
-                                <th style="width:10%">出版社</th>
-                                <th style="width:10%">字號</th>
-                                <th style="width:20%">備註</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                    """
-                    grade_df = grade_df.sort_values(by='課程名稱')
-                    for _, row in grade_df.iterrows():
-                        def mk_cell(v1, v2):
-                            v1_s = str(v1) if v1 else ""
-                            if not v2: return f"<div class='book-cell'>{v1_s}</div>"
-                            v2_s = str(v2) if v2 else ""
-                            return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
+            elements.append(Paragraph("無資料", normal_style))
+            elements.append(Spacer(1, 10))
+            continue
+            
+        for g in sorted(sem_df['年級'].unique()):
+            grade_df = sem_df[sem_df['年級'] == str(g)]
+            if not grade_df.empty:
+                elements.append(Paragraph(f"<b>【{g} 年級】</b>", normal_style))
+                elements.append(Spacer(1, 2))
+                
+                # 表格資料
+                table_data = [['課程名稱', '適用班級', '教科書名稱', '冊次', '出版社', '字號', '備註']]
+                
+                grade_df = grade_df.sort_values(by='課程名稱')
+                for _, row in grade_df.iterrows():
+                    # 處理上下兩列 (使用 Paragraph 支援 HTML tags 模擬顏色和換行)
+                    # 優先 1 (黑)
+                    # 優先 2 (藍)
+                    
+                    b1 = row.get('教科書(優先1)') or row.get('教科書(1)') or row.get('教科書') or ''
+                    v1 = row.get('冊次(1)') or row.get('冊次') or ''
+                    p1 = row.get('出版社(1)') or row.get('出版社') or ''
+                    c1 = row.get('審定字號(1)') or row.get('字號(1)') or row.get('字號') or ''
+                    
+                    b2 = row.get('教科書(優先2)') or row.get('教科書(2)') or ''
+                    v2 = row.get('冊次(2)') or ''
+                    p2 = row.get('出版社(2)') or ''
+                    c2 = row.get('審定字號(2)') or row.get('字號(2)') or ''
+                    
+                    def mk_para(t1, t2):
+                        text = f"{t1}"
+                        if t2:
+                            text += f"<br/><font color='blue'>----------------</font><br/><font color='blue'>{t2}</font>"
+                        return Paragraph(text, centered_style)
 
-                        # 修正：確保讀取正確的 key (繁體 優先1)
-                        b1 = row.get('教科書(優先1)') or row.get('教科書(1)') or row.get('教科書') or ''
-                        v1 = row.get('冊次(1)') or row.get('冊次') or ''
-                        p1 = row.get('出版社(1)') or row.get('出版社') or ''
-                        c1 = row.get('審定字號(1)') or row.get('字號(1)') or row.get('字號') or ''
-                        
-                        b2 = row.get('教科書(優先2)') or row.get('教科書(2)') or ''
-                        v2 = row.get('冊次(2)') or ''
-                        p2 = row.get('出版社(2)') or ''
-                        c2 = row.get('審定字號(2)') or row.get('字號(2)') or ''
-                        
-                        book_cell = mk_cell(b1, b2)
-                        vol_cell = mk_cell(v1, v2)
-                        pub_cell = mk_cell(p1, p2)
-                        code_cell = mk_cell(c1, c2)
-                        
-                        html += f"""
-                            <tr>
-                                <td>{row['課程名稱']}</td>
-                                <td>{row['適用班級']}</td>
-                                <td>{book_cell}</td>
-                                <td>{vol_cell}</td>
-                                <td>{pub_cell}</td>
-                                <td>{code_cell}</td>
-                                <td>{row.get('備註', '')}</td>
-                            </tr>
-                        """
-                    html += "</tbody></table>"
-
-    html += """
-        <div class="footer">
-            <div>填表人：</div>
-            <div>召集人：</div>
-            <div>教務主任：</div>
-    """
-    if is_vocational:
-        html += "<div>實習主任：</div>"
+                    table_data.append([
+                        Paragraph(str(row['課程名稱']), centered_style),
+                        Paragraph(str(row['適用班級']), centered_style),
+                        mk_para(b1, b2),
+                        mk_para(v1, v2),
+                        mk_para(p1, p2),
+                        mk_para(c1, c2),
+                        Paragraph(str(row.get('備註', '')), centered_style)
+                    ])
+                
+                t = Table(table_data, colWidths=col_widths, repeatRows=1)
+                t.setStyle(table_style)
+                elements.append(t)
+                elements.append(Spacer(1, 15))
     
-    html += """
-            <div>校長：</div>
-        </div>
-    </body>
-    </html>
-    """
-    return html
+    # 簽章
+    elements.append(Spacer(1, 20))
+    
+    is_vocational = dept in DEPT_SPECIFIC_CONFIG
+    
+    sig_data = [
+        ["填表人簽章：", "__________", "召集人：", "__________"],
+        ["教務主任：", "__________", "實習主任：" if is_vocational else "", "__________" if is_vocational else ""],
+        ["校長：", "__________", "", ""]
+    ]
+    sig_table = Table(sig_data, colWidths=[80, 120, 80, 120])
+    sig_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    elements.append(sig_table)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
 
 # --- 6. 班級計算邏輯 ---
 def get_all_possible_classes(grade):
@@ -445,7 +469,6 @@ def get_all_possible_classes(grade):
     return sorted(list(set(classes)))
 
 def get_target_classes_for_dept(dept, grade, sys_name):
-    # 邏輯：專業科系抓該科，共同科目抓全校
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     suffixes = []
@@ -454,7 +477,6 @@ def get_target_classes_for_dept(dept, grade, sys_name):
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
         suffixes = ALL_SUFFIXES.get(sys_name, [])
-        
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
@@ -530,11 +552,9 @@ def on_editor_change():
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
         grade = st.session_state.get('grade_val')
-        valid_classes = get_all_possible_classes(grade) if grade else []
-        final_list = [c for c in class_list if c in valid_classes]
-        
-        st.session_state['active_classes'] = final_list
-        st.session_state['class_multiselect'] = final_list
+        # 這裡不進行過濾，直接填入
+        st.session_state['active_classes'] = class_list
+        st.session_state['class_multiselect'] = class_list
 
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
@@ -856,13 +876,16 @@ def main():
 
         col_submit, _ = st.columns([1, 4])
         with col_submit:
-            if st.button("📄 轉 PDF (下載 HTML 報表)", type="primary", use_container_width=True):
+            if st.button("📄 下載 PDF 報表", type="primary", use_container_width=True):
                 with st.spinner("正在產生全學期報表..."):
-                    html_report = create_full_report(dept)
-                    b64 = base64.b64encode(html_report.encode('utf-8')).decode()
-                    href = f'<a href="data:text/html;base64,{b64}" download="{dept}_教科書總表.html" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">📄 點此下載完整報表 (含上下學期/各年級)</a>'
-                    st.markdown(href, unsafe_allow_html=True)
-                    st.success("✅ 報表已生成！")
+                    pdf_buffer = create_pdf_report(dept)
+                    if pdf_buffer:
+                        b64 = base64.b64encode(pdf_buffer.read()).decode()
+                        href = f'<a href="data:application/pdf;base64,{b64}" download="{dept}_教科書總表.pdf" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">📄 點此下載 PDF</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                        st.success("✅ 報表已生成！")
+                    else:
+                        st.error("❌ 報表生成失敗，可能是沒有資料。")
 
     else:
         st.info("👈 請先在左側選擇科別")
