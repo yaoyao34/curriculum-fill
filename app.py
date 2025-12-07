@@ -515,7 +515,7 @@ def create_pdf_report(dept):
     
     # --- 🌟 修改 2: 欄位寬度調整 (總寬度約 190mm 以符合 A4 直向) ---
     # 比例重新分配以適應直向頁面
-    col_widths = [21, 65, 28, 10, 17, 24, 30] 
+    col_widths = [21, 65, 28, 10, 17, 24, 25] 
     # [課程, 班級, 書名, 冊, 出版, 字號, 備註]
     
     col_names = [
@@ -528,7 +528,7 @@ def create_pdf_report(dept):
     
     def render_table_header(pdf):
         """繪製表格標頭，支援 MultiCell 換行"""
-        pdf.set_font(CHINESE_FONT, 'B', 12) 
+        pdf.set_font(CHINESE_FONT, 'B', 10) 
         pdf.set_fill_color(220, 220, 220)
         start_x = pdf.get_x()
         start_y = pdf.get_y()
@@ -538,10 +538,10 @@ def create_pdf_report(dept):
             pdf.multi_cell(w, 7, name, 1, 'C', 1) 
             start_x += w
         pdf.set_xy(pdf.l_margin, start_y + 7) # 移至下一行
-        pdf.set_font(CHINESE_FONT, '', 8) # 切回內文文字
+        pdf.set_font(CHINESE_FONT, '', 10) # 切回內文文字
         
     # 依學期和年級分組繪製表格
-    pdf.set_font(CHINESE_FONT, '', 8)
+    pdf.set_font(CHINESE_FONT, '', 10)
     
     for sem in sorted(df['學期'].unique()):
         sem_df = df[df['學期'] == sem].copy()
@@ -1184,6 +1184,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
