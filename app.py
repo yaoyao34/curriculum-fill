@@ -382,7 +382,7 @@ def create_pdf_report(dept):
                 elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                 elif c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 # --- 處理備註欄位名稱 (與 load_data 邏輯一致) ---
-                elif c == '備註' or c.startswith('備註'): new_name = f"備註-{seen[c]}"
+                elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
@@ -1113,4 +1113,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
