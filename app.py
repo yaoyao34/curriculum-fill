@@ -465,12 +465,14 @@ def create_pdf_report(dept):
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
                 # 備註欄位：確保只從 DF 中取出值，不進行任何硬編碼的欄位名檢查。
                 r1 = str(row.get('備註1', '')).strip() 
+                
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
                 r2 = str(row.get('備註2', '')).strip()
-                      # --- Debug 模式 (在 PDF 中輸出 r1, r2 的原始值) ---
+
+                # --- Debug 模式 (在 PDF 中輸出 r1, r2 的原始值) ---
                 # 如果要 debug，請取消註解以下幾行，並將其放入 data_row_to_write 的適當位置
                 # debug_text = f"r1:{r1}, r2:{r2}"
                 # 課程名稱 = f"{row['課程名稱']}\n{debug_text}" 
@@ -1104,5 +1106,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
