@@ -382,7 +382,7 @@ def create_pdf_report(dept):
                 elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                 elif c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 # --- 處理備註欄位名稱 (與 load_data 邏輯一致) ---
-                elif c == '備註' or c.startswith('備註'): new_name = f"備註-{seen[c]}"
+                elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
@@ -485,8 +485,8 @@ def create_pdf_report(dept):
                 v2 = str(row.get('冊次(2)', '')).strip()
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
-                r2 = str(row.get('備註2', '')).strip()
-                
+                #r2 = str(row.get('備註2', '')).strip()
+                r2=''
                 # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
                     # 確保所有輸入都是非空字串
@@ -1113,6 +1113,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
