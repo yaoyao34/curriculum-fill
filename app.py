@@ -7,6 +7,41 @@ import json
 import base64
 import uuid
 
+def safe_note(val):
+    """
+    最終穩定版：
+    1. 自動處理 pandas Series（只取第一格）
+    2. 自動處理 None / NaN
+    3. 使用 replace() 全域移除「備註1 / 備註2」
+    4. 自動清除 Name: 0, dtype: object 這種尾巴
+    """
+
+    # --- 1️⃣ 若是 Series，只取第一格 ---
+    if isinstance(val, pd.Series):
+        if not val.empty:
+            val = val.iloc[0]
+        else:
+            val = ""
+
+    # --- 2️⃣ 處理 None / NaN ---
+    if val is None or str(val).lower() == "nan":
+        return ""
+
+    val = str(val)
+
+    # --- 3️⃣ 強制移除所有「備註1 / 備註2」(不管在前、中、後) ---
+    val = val.replace("備註1", "").replace("備註2", "")
+
+    # --- 4️⃣ 強制移除 pandas Series 尾巴 ---
+    # 例如：Name: 0, dtype: object
+    if "dtype" in val:
+        val = val.split("Name:")[0]
+
+    # --- 5️⃣ 清理多餘空白 / 換行 ---
+    val = val.replace("\n", " ").strip()
+
+    return val
+
 # --- NEW: Import FPDF for PDF generation
 from fpdf import FPDF 
 
@@ -474,13 +509,13 @@ def create_pdf_report(dept):
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
                 # 備註欄位：確保只從 DF 中取出值
-                r1 = str(row.get('備註1', '')).strip() 
+                r1 = safe_note(row, '備註1', '備註(1)', '備註') 
                 
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
-                r2 = str(row.get('備註2', '')).strip()
+                r2 = safe_note(row, '備註2', '備註(2)')
                 
                 # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
@@ -1108,3 +1143,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
