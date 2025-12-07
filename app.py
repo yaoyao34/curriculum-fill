@@ -406,7 +406,7 @@ def create_pdf_report(dept):
     # 冊次: 15mm
     # 出版社: 25mm
     # 審定字號: 35mm
-    # 備註 (作者/單價): 35mm (調整為新的備註欄位)
+    # 備註 (作者/單價): 35mm
     
     col_widths = [30, 79, 40, 15, 25, 35, 35] 
     col_names = [
@@ -451,27 +451,27 @@ def create_pdf_report(dept):
 
             for _, row in sem_df.iterrows():
                 
-                # --- 合併欄位資料 ---
-                b1 = row.get('教科書(優先1)') or row.get('教科書(1)', '')
-                v1 = row.get('冊次(1)', '')
-                p1 = row.get('出版社(1)', '')
-                c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
-                r1 = row.get('備註1', '') # --- 修正 4.2: 取得備註1 ---
+                # --- 修正 5: 確保所有取出的數據都轉換為 str()，避免 Pandas Series 輸出 ---
+                b1 = str(row.get('教科書(優先1)') or row.get('教科書(1)', ''))
+                v1 = str(row.get('冊次(1)', ''))
+                p1 = str(row.get('出版社(1)', ''))
+                c1 = str(row.get('審定字號(1)') or row.get('字號(1)', ''))
+                r1 = str(row.get('備註1', '')) 
                 
-                b2 = row.get('教科書(優先2)') or row.get('教科書(2)', '')
-                v2 = row.get('冊次(2)', '')
-                p2 = row.get('出版社(2)', '')
-                c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
-                r2 = row.get('備註2', '') # --- 修正 4.3: 取得備註2 ---
+                b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', ''))
+                v2 = str(row.get('冊次(2)', ''))
+                p2 = str(row.get('出版社(2)', ''))
+                c2 = str(row.get('審定字號(2)') or row.get('字號(2)', ''))
+                r2 = str(row.get('備註2', '')) 
                 
                 data_row_to_write = [
-                    row['課程名稱'],
-                    row['適用班級'],
+                    str(row['課程名稱']),
+                    str(row['適用班級']),
                     f"{b1}\n{b2}", # 教科書 [2]
                     f"{v1}\n{v2}", # 冊次 [3]
                     f"{p1}\n{p2}", # 出版社 [4]
                     f"{c1}\n{c2}", # 審定字號 [5]
-                    f"{r1}\n{r2}" # 備註 (作者/單價) [6] --- 修正 4.4: 合併備註1/2 ---
+                    f"{r1}\n{r2}" # 備註 (作者/單價) [6]
                 ]
                 
                 # 1. 計算最大行高 (用於 MultiCell 換行)
@@ -485,6 +485,7 @@ def create_pdf_report(dept):
                 class_text = str(data_row_to_write[1])
                 class_height = 4.5
                 if class_text:
+                    # 估算行數 (每行文字寬度 * 0.9 留白)
                     num_lines_class = pdf.get_string_width(class_text) // (class_width * 0.9) + 1
                     class_height = num_lines_class * 4.5
                 
@@ -663,12 +664,13 @@ def on_editor_change():
         }
         st.session_state['current_uuid'] = row_data.get('uuid')
         
-        # --- 修正 5.1: 更新 form_data 結構，包含備註1/2 ---
+        # --- 修正 6: 更新 form_data 結構，包含備註1/2 ---
         st.session_state['form_data'] = {
             'course': row_data["課程名稱"],
             'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
             'book2': row_data.get("教科書(優先2)", ""), 'vol2': row_data.get("冊次(2)", ""), 'pub2': row_data.get("出版社(2)", ""), 'code2': row_data.get("審定字號(2)", ""),
-            'note1': row_data.get("備註1", ""),
+            # 確保從 dataframe 正確讀取 '備註1' 和 '備註2'
+            'note1': row_data.get("備註1", ""), 
             'note2': row_data.get("備註2", "")
         }
         
@@ -721,6 +723,12 @@ def auto_load_data():
         st.session_state['original_key'] = None
         st.session_state['current_uuid'] = None
         st.session_state['active_classes'] = []
+        
+        # --- 修正 7: 完整初始化 form_data ---
+        st.session_state['form_data'] = {
+            'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 'code1': '',
+            'book2': '', 'vol2': '全', 'pub2': '', 'code2': '', 'note1': '', 'note2': ''
+        }
         
         # 預設勾選
         if dept not in DEPT_SPECIFIC_CONFIG:
@@ -781,7 +789,7 @@ def main():
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
     if 'current_uuid' not in st.session_state: st.session_state['current_uuid'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
-    # --- 修正 6.1: 初始化 form_data，包含備註1/2 ---
+    # --- 修正 8: 初始化 form_data，包含備註1/2 ---
     if 'form_data' not in st.session_state:
         st.session_state['form_data'] = {
             'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 'code1': '',
@@ -845,7 +853,7 @@ def main():
                         st.session_state['edit_index'] = None
                         st.session_state['current_uuid'] = None
                         st.session_state['active_classes'] = []
-                        # --- 修正 6.2: 清空備註1/2 ---
+                        # 清空 form_data
                         st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                         st.session_state['form_data']['vol1'] = '全'
                         st.session_state['form_data']['vol2'] = '全'
@@ -874,7 +882,7 @@ def main():
             with bc1: input_vol1 = st.selectbox("冊次", vol_opts, index=vol1_idx)
             with bc2: input_pub1 = st.text_input("出版社", value=current_form['pub1'])
             input_code1 = st.text_input("審定字號", value=current_form['code1']) 
-            # --- 修正 6.3: 新增備註1輸入欄位 ---
+            # --- 修正 4: 新增備註1輸入欄位 ---
             input_note1 = st.text_input("備註 (優先1)", value=current_form['note1']) 
 
 
@@ -885,7 +893,7 @@ def main():
             with bc3: input_vol2 = st.selectbox("冊次(2)", vol_opts, index=vol2_idx)
             with bc4: input_pub2 = st.text_input("出版社(2)", value=current_form['pub2'])
             input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) 
-            # --- 修正 6.4: 新增備註2輸入欄位 ---
+            # --- 修正 5: 新增備註2輸入欄位 ---
             input_note2 = st.text_input("備註 (優先2)", value=current_form['note2'])
 
             
@@ -935,8 +943,8 @@ def main():
                             "教科書(優先1)": input_book1, "冊次(1)": input_vol1, "出版社(1)": input_pub1, "審定字號(1)": input_code1,
                             "教科書(優先2)": input_book2, "冊次(2)": input_vol2, "出版社(2)": input_pub2, "審定字號(2)": input_code2,
                             "適用班級": input_class_str,
-                            "備註1": input_note1, # --- 修正 6.5: 存入備註1 ---
-                            "備註2": input_note2  # --- 修正 6.6: 存入備註2 ---
+                            "備註1": input_note1, # 存入備註1
+                            "備註2": input_note2  # 存入備註2
                         }
 
                         with st.spinner("正在寫入資料庫..."):
@@ -976,8 +984,8 @@ def main():
                             "教科書(優先1)": input_book1, "冊次(1)": input_vol1, "出版社(1)": input_pub1, "審定字號(1)": input_code1,
                             "教科書(優先2)": input_book2, "冊次(2)": input_vol2, "出版社(2)": input_pub2, "審定字號(2)": input_code2,
                             "適用班級": input_class_str,
-                            "備註1": input_note1, # --- 修正 6.7: 存入備註1 ---
-                            "備註2": input_note2  # --- 修正 6.8: 存入備註2 ---
+                            "備註1": input_note1, # 存入備註1
+                            "備註2": input_note2  # 存入備註2
                         }
                         
                         with st.spinner("正在寫入資料庫..."):
@@ -1021,7 +1029,7 @@ def main():
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                # --- 修正 6.9: 顯示備註1/2 欄位 (只顯示備註1，備註2保留在資料中) ---
+                # 顯示備註1/2 欄位
                 "備註1": st.column_config.TextColumn("備註(1)", width="small", disabled=True),
                 "備註2": st.column_config.TextColumn("備註(2)", width="small", disabled=True),
             },
