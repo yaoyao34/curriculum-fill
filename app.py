@@ -538,16 +538,16 @@ def create_pdf_report(dept):
             pdf.multi_cell(w, 7, name, 1, 'C', 1) 
             start_x += w
         pdf.set_xy(pdf.l_margin, start_y + 7) # 移至下一行
-        pdf.set_font(CHINESE_FONT, '', 10) # 切回內文文字
+        pdf.set_font(CHINESE_FONT, '', 9) # 切回內文文字
         
     # 依學期和年級分組繪製表格
-    pdf.set_font(CHINESE_FONT, '', 10)
+    pdf.set_font(CHINESE_FONT, '', 9)
     
     for sem in sorted(df['學期'].unique()):
         sem_df = df[df['學期'] == sem].copy()
         
         # 學期標頭
-        pdf.set_font(CHINESE_FONT, 'B', 12)
+        pdf.set_font(CHINESE_FONT, 'B', 10)
         pdf.set_fill_color(200, 220, 255)
         pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
         
@@ -596,7 +596,7 @@ def create_pdf_report(dept):
                 ]
                 
                 # 1. 計算最大行高 (用於 MultiCell 換行)
-                pdf.set_font(CHINESE_FONT, '', 10)
+                pdf.set_font(CHINESE_FONT, '', 9)
                 
                 base_height = 9.0 
                 
@@ -613,7 +613,7 @@ def create_pdf_report(dept):
                 # 2. 檢查是否需要換頁
                 if pdf.get_y() + row_height > pdf.page_break_trigger:
                     pdf.add_page()
-                    pdf.set_font(CHINESE_FONT, 'B', 10)
+                    pdf.set_font(CHINESE_FONT, 'B', 9)
                     pdf.set_fill_color(200, 220, 255)
                     pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
                     render_table_header(pdf)
@@ -627,7 +627,7 @@ def create_pdf_report(dept):
                     pdf.set_xy(start_x, start_y)
                     pdf.cell(w, row_height, "", 1, 0, 'L')
                     
-                    pdf.set_font(CHINESE_FONT, '', 10)
+                    pdf.set_font(CHINESE_FONT, '', 9)
                     
                     if i in [2, 3, 4, 5, 6]: # 雙行合併欄位
                         y_offset = (row_height - base_height) / 2 + 0.5
@@ -1184,6 +1184,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
