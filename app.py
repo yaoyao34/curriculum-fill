@@ -404,7 +404,7 @@ def create_pdf_report(dept):
     col_names = [
         "課程名稱", "適用班級", 
         "教科書", "冊次", "出版社", "審定字號",
-        "備註 (作者/單價)" # --- 修正 4.1: 更新備註欄位名稱 ---
+        "備註 (作者/單價)" 
     ]
     
     TOTAL_TABLE_WIDTH = sum(col_widths)
@@ -443,7 +443,7 @@ def create_pdf_report(dept):
 
             for _, row in sem_df.iterrows():
                 
-                # --- 修正 5: 確保所有取出的數據都轉換為 str()，避免 Pandas Series 輸出 ---
+                # --- 修正 9: 確保所有取出的數據都轉換為 str()，並去除空白，避免 Pandas Series 輸出 ---
                 b1 = str(row.get('教科書(優先1)') or row.get('教科書(1)', '')).strip()
                 v1 = str(row.get('冊次(1)', '')).strip()
                 p1 = str(row.get('出版社(1)', '')).strip()
@@ -456,8 +456,12 @@ def create_pdf_report(dept):
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
                 r2 = str(row.get('備註2', '')).strip()
                 
-                # 輔助函式：只在兩行內容皆不為空時使用 \n，避免空行
+                # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
+                    # 確保所有輸入都是非空字串
+                    val1 = val1 if val1 else ""
+                    val2 = val2 if val2 else ""
+                    
                     if not val1 and not val2:
                         return ""
                     elif not val2:
