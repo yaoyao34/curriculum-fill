@@ -174,11 +174,11 @@ def get_course_list():
         return st.session_state['data']['課程名稱'].unique().tolist()
     return []
 
-# --- 4. 存檔 (修正：正確對應 CSV 欄位順序) ---
-def save_single_row(row_data):
+# --- 4. 存檔 (修正：支援覆蓋舊資料) ---
+def save_single_row(row_data, original_key=None):
     """
-    將單筆資料直接寫入/更新至 Google Sheets 的 Submission_Records。
-    注意：Submission_Records.csv 的順序是: 填報時間, 科別, 學期, 年級, ...
+    將單筆資料寫入 Google Sheets。
+    如果提供了 original_key，會嘗試尋找並覆蓋舊資料；否則直接新增。
     """
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
@@ -186,27 +186,65 @@ def save_single_row(row_data):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
-        # 這裡也要確保標題列正確
         ws_sub.append_row(["填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
+    # 取得現有資料以進行比對
+    all_values = ws_sub.get_all_values()
+    if not all_values:
+        headers = [] # Should not happen if sheet exists
+    else:
+        headers = all_values[0]
+
+    # 建立標題索引對照表
+    col_map = {h: i for i, h in enumerate(headers)}
+    
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # 修正重點：欄位順序改成 [時間, 科別, 學期, 年級, ...]
-    row_to_append = [
+    # 準備要寫入的資料 (順序依照 CSV 標題)
+    # [填報時間, 科別, 學期, 年級, 課程名稱, 教科書(1)...]
+    row_to_write = [
         timestamp,
-        row_data['科別'], 
-        row_data['學期'], # 這裡修正了：學期在前
-        row_data['年級'], # 年級在後
-        row_data['課程名稱'],
+        row_data['科別'], row_data['學期'], row_data['年級'], row_data['課程名稱'],
         row_data['教科書(優先1)'], row_data['冊次(1)'], row_data['出版社(1)'], row_data['審定字號(1)'],
         row_data['教科書(優先2)'], row_data['冊次(2)'], row_data['出版社(2)'], row_data['審定字號(2)'],
         row_data['適用班級'], row_data['備註']
     ]
-    
-    ws_sub.append_row(row_to_append)
+
+    target_row_index = -1
+
+    # 如果有原始資料 key，嘗試尋找舊資料
+    if original_key:
+        # 從最後一筆開始往前找 (因為 load_data 顯示的是最新的)
+        for i in range(len(all_values) - 1, 0, -1):
+            row = all_values[i]
+            # 比對關鍵欄位：科別、學期、年級、課程名稱、適用班級
+            # 注意：CSV 索引需對應 col_map
+            try:
+                if (row[col_map['科別']] == original_key['科別'] and
+                    str(row[col_map['學期']]) == str(original_key['學期']) and
+                    str(row[col_map['年級']]) == str(original_key['年級']) and
+                    row[col_map['課程名稱']] == original_key['課程名稱'] and
+                    row[col_map['適用班級']] == original_key['適用班級']):
+                    
+                    target_row_index = i + 1 # Google Sheet 是 1-based index
+                    break
+            except KeyError:
+                continue # 標題對不上就跳過
+
+    if target_row_index > 0:
+        # 找到舊資料 -> 覆蓋 (Update)
+        # 為了避免格式問題，我們逐格更新或整列更新
+        # ws_sub.update(f"A{target_row_index}", [row_to_write]) # gspread 寫法
+        # 注意：範圍需根據實際欄位數調整，這裡假設是 A 到 O (15欄)
+        range_name = f"A{target_row_index}:O{target_row_index}"
+        ws_sub.update(range_name=range_name, values=[row_to_write])
+    else:
+        # 沒找到 or 新增模式 -> 追加 (Append)
+        ws_sub.append_row(row_to_write)
+        
     return True
 
-# --- 5. 產生 HTML 報表 (修正：上下兩列顯示) ---
+# --- 5. 產生 HTML 報表 ---
 def create_full_report(dept):
     client = get_connection()
     try:
@@ -218,7 +256,6 @@ def create_full_report(dept):
         headers = data[0]
         rows = data[1:]
         
-        # 處理重複標頭
         seen = {}
         new_headers = []
         for col in headers:
@@ -255,6 +292,7 @@ def create_full_report(dept):
     if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
     df = df.sort_values(by='填報時間')
+    # 這裡的去重要包含適用班級，避免不同班級的同名課被刪
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
     html = f"""
@@ -307,43 +345,26 @@ def create_full_report(dept):
                     """
                     grade_df = grade_df.sort_values(by='課程名稱')
                     for _, row in grade_df.iterrows():
-                        # 第一本書
-                        b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
-                        # 有時候讀取會因為 header 處理有點偏差，這裡做個防呆
-                        if not b1 and '教科書(優先1)' in row: b1 = row['教科書(優先1)']
-                        
-                        v1 = row.get('冊次(1)', '')
-                        p1 = row.get('出版社(1)', '')
-                        c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
-                        
-                        # 第二本書 (如果有)
+                        book2_info = ""
                         b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
-                        if not b2 and '教科書(優先2)' in row: b2 = row['教科書(優先2)']
-                        
-                        # 顯示內容組合：如果有第二本，就用上下列顯示
-                        book_content = f"<div class='book-row'>{b1}</div>"
-                        vol_content = f"<div class='book-row'>{v1}</div>"
-                        pub_content = f"<div class='book-row'>{p1}</div>"
-                        code_content = f"<div class='book-row'>{c1}</div>"
-                        
                         if b2:
                             v2 = row.get('冊次(2)', '')
                             p2 = row.get('出版社(2)', '')
-                            c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
-                            
-                            book_content += f"<div class='book-secondary'>{b2}</div>"
-                            vol_content += f"<div class='book-secondary'>{v2}</div>"
-                            pub_content += f"<div class='book-secondary'>{p2}</div>"
-                            code_content += f"<div class='book-secondary'>{c2}</div>"
+                            book2_info = f"<br><span style='color:blue; font-size:0.9em'>(2) {b2} / {v2} / {p2}</span>"
+                        
+                        b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
+                        v1 = row.get('冊次(1)', '')
+                        p1 = row.get('出版社(1)', '')
+                        c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
                         
                         html += f"""
                             <tr>
                                 <td>{row['課程名稱']}</td>
                                 <td>{row['適用班級']}</td>
-                                <td>{book_content}</td>
-                                <td>{vol_content}</td>
-                                <td>{pub_content}</td>
-                                <td>{code_content}</td>
+                                <td>{b1}{book2_info}</td>
+                                <td>{v1}</td>
+                                <td>{p1}</td>
+                                <td>{c1}</td>
                                 <td>{row.get('備註', '')}</td>
                             </tr>
                         """
@@ -431,6 +452,17 @@ def on_editor_change():
         st.session_state['edit_index'] = target_idx
         
         row_data = st.session_state['data'].iloc[target_idx]
+        
+        # 1. 記錄原始識別資料 (Key)，用於存檔時比對覆蓋
+        st.session_state['original_key'] = {
+            '科別': row_data['科別'],
+            '年級': str(row_data['年級']),
+            '學期': str(row_data['學期']),
+            '課程名稱': row_data['課程名稱'],
+            '適用班級': str(row_data.get('適用班級', ''))
+        }
+
+        # 2. 載入表單資料
         st.session_state['form_data'] = {
             'course': row_data["課程名稱"],
             'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
@@ -438,6 +470,7 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
+        # 3. 載入班級
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
@@ -446,7 +479,6 @@ def on_editor_change():
         final_list = [c for c in class_list if c in valid_classes]
         
         st.session_state['active_classes'] = final_list
-        # 這裡也要更新 widget key
         st.session_state['class_multiselect'] = final_list
 
         st.session_state['cb_reg'] = False
@@ -460,6 +492,7 @@ def on_editor_change():
              if edits[str(current_idx)].get("勾選") is False:
                  st.session_state['data'].at[current_idx, "勾選"] = False
                  st.session_state['edit_index'] = None
+                 st.session_state['original_key'] = None # 取消勾選時清空 key
 
 def auto_load_data():
     dept = st.session_state.get('dept_val')
@@ -471,11 +504,18 @@ def auto_load_data():
         st.session_state['data'] = df
         st.session_state['loaded'] = True
         st.session_state['edit_index'] = None
+        st.session_state['original_key'] = None
         st.session_state['active_classes'] = []
         st.session_state['cb_reg'] = True
-        st.session_state['cb_prac'] = False
-        st.session_state['cb_coop'] = False
-        st.session_state['cb_all'] = False
+        st.session_state['cb_prac'] = True
+        st.session_state['cb_coop'] = True
+        st.session_state['cb_all'] = True
+        
+        if dept in DEPT_SPECIFIC_CONFIG:
+             st.session_state['cb_prac'] = False
+             st.session_state['cb_coop'] = False
+             st.session_state['cb_all'] = False
+            
         update_class_list_from_checkboxes()
         st.session_state['editor_key_counter'] += 1
 
@@ -521,6 +561,7 @@ def main():
     """, unsafe_allow_html=True)
 
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
+    if 'original_key' not in st.session_state: st.session_state['original_key'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
     if 'form_data' not in st.session_state:
         st.session_state['form_data'] = {
@@ -568,6 +609,7 @@ def main():
                 with c_cancel:
                     if st.button("❌ 取消", type="secondary"):
                         st.session_state['edit_index'] = None
+                        st.session_state['original_key'] = None
                         st.session_state['data']["勾選"] = False
                         st.session_state['editor_key_counter'] += 1
                         st.rerun()
@@ -576,12 +618,14 @@ def main():
                         idx = st.session_state['edit_index']
                         st.session_state['data'] = st.session_state['data'].drop(idx).reset_index(drop=True)
                         st.session_state['edit_index'] = None
+                        st.session_state['original_key'] = None
                         st.session_state['active_classes'] = []
                         st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                         st.session_state['editor_key_counter'] += 1
                         
                         # 刪除也要存檔
                         with st.spinner("同步資料庫..."):
+                            # 這裡僅前端刪除
                             pass
                         
                         st.success("已從列表中移除 (資料庫紀錄仍保留)")
@@ -628,7 +672,6 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            # 防呆
             valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
             st.session_state['active_classes'] = valid_active
             
@@ -646,7 +689,6 @@ def main():
             if is_edit_mode:
                 if st.button("🔄 更新表格 (存檔)", type="primary", use_container_width=True):
                     idx = st.session_state['edit_index']
-                    # 準備資料
                     new_row = {
                         "科別": dept, "年級": grade, "學期": sem,
                         "課程類別": "部定必修", 
@@ -657,20 +699,20 @@ def main():
                         "備註": input_note
                     }
 
+                    # 嘗試更新舊資料或新增 (依據 original_key)
                     with st.spinner("正在寫入資料庫..."):
-                        save_single_row(new_row)
+                        save_single_row(new_row, st.session_state.get('original_key'))
 
                     for k, v in new_row.items():
                         if k in st.session_state['data'].columns:
                             st.session_state['data'].at[idx, k] = v
                     st.session_state['data'].at[idx, "勾選"] = False
 
-                    # 清空側邊欄
                     st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                     st.session_state['active_classes'] = []
                     
                     st.session_state['edit_index'] = None
-                    st.session_state['last_selected_row'] = None 
+                    st.session_state['original_key'] = None
                     st.session_state['editor_key_counter'] += 1 
                     
                     st.success("✅ 更新並存檔成功！")
@@ -689,7 +731,7 @@ def main():
                     }
                     
                     with st.spinner("正在寫入資料庫..."):
-                        save_single_row(new_row)
+                        save_single_row(new_row, None) # 新增無 key
                         
                     st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
                     st.session_state['editor_key_counter'] += 1
