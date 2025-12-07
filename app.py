@@ -596,7 +596,7 @@ def create_pdf_report(dept):
                 ]
                 
                 # 1. 計算最大行高 (用於 MultiCell 換行)
-                pdf.set_font(CHINESE_FONT, '', 8)
+                pdf.set_font(CHINESE_FONT, '', 10)
                 
                 base_height = 9.0 
                 
@@ -1184,6 +1184,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
