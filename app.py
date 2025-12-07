@@ -440,6 +440,8 @@ def create_pdf_report(dept):
                 else: new_headers.append(c)
         
         df_full = pd.DataFrame(rows, columns=new_headers)
+        st.write("✅ PDF 欄位實際名稱：", df_full.columns.tolist())
+
         
         if df_full.empty: return None
 
@@ -1157,6 +1159,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
