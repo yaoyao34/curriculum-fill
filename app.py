@@ -242,7 +242,7 @@ def save_single_row(row_data, original_key=None):
         
     return True
 
-# --- 4.5 刪除功能 ---
+# --- 4.5 刪除功能 (UUID 刪除) ---
 def delete_row_from_db(target_uuid):
     if not target_uuid: return False
     
@@ -335,8 +335,8 @@ def create_full_report(dept):
             table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
             th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; vertical-align: middle; }}
             th {{ background-color: #f2f2f2; }}
-            .book-cell {{ padding: 2px 0; }}
-            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 2px; display: block; }}
+            .book-cell {{ padding: 4px 0; }}
+            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 4px; }}
             .footer {{ margin-top: 50px; display: flex; justify-content: space-between; }}
             .footer div {{ width: 18%; border-bottom: 1px solid black; padding-bottom: 5px; text-align: left; margin-right: 5px; }}
         </style>
@@ -380,15 +380,17 @@ def create_full_report(dept):
                             v2_s = str(v2) if v2 else ""
                             return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
 
-                        b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
-                        v2 = row.get('冊次(2)', '')
-                        p2 = row.get('出版社(2)', '')
-                        c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
+                        # 修正關鍵：讀取正確的欄位名稱 (繁體優先)
+                        # 教科書(優先1) 優先於 教科書(1)
+                        b1 = row.get('教科書(優先1)') or row.get('教科書(1)') or row.get('教科書') or ''
+                        v1 = row.get('冊次(1)') or row.get('冊次') or ''
+                        p1 = row.get('出版社(1)') or row.get('出版社') or ''
+                        c1 = row.get('審定字號(1)') or row.get('字號(1)') or row.get('字號') or ''
                         
-                        b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
-                        v1 = row.get('冊次(1)', '')
-                        p1 = row.get('出版社(1)', '')
-                        c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
+                        b2 = row.get('教科書(優先2)') or row.get('教科書(2)') or ''
+                        v2 = row.get('冊次(2)') or ''
+                        p2 = row.get('出版社(2)') or ''
+                        c2 = row.get('審定字號(2)') or row.get('字號(2)') or ''
                         
                         book_cell = mk_cell(b1, b2)
                         vol_cell = mk_cell(v1, v2)
@@ -425,10 +427,8 @@ def create_full_report(dept):
     """
     return html
 
-# --- 6. 班級計算邏輯 (核心修正區) ---
-
+# --- 6. 班級計算邏輯 ---
 def get_all_possible_classes(grade):
-    """取得該年級全校所有可能的班級"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     classes = []
@@ -438,22 +438,14 @@ def get_all_possible_classes(grade):
     return sorted(list(set(classes)))
 
 def get_target_classes_for_dept(dept, grade, sys_name):
-    """
-    根據科別與學制，回傳「預設勾選」的班級。
-    - 專業科系 (機械科)：只回傳該科系的班級 (機甲, 機乙)。
-    - 共同科目 (資訊)：回傳該學制的全校班級 (機甲, 電甲, 建築...)。
-    """
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
-    
     suffixes = []
+    
     if dept in DEPT_SPECIFIC_CONFIG:
-        # 專業科系：只抓該科設定
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
-        # 共同科目：抓全校該學制設定
         suffixes = ALL_SUFFIXES.get(sys_name, [])
-        
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
@@ -461,32 +453,20 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
+    current_list = list(st.session_state.get('active_classes', []))
     
-    # 1. 取得目前已經選的 (避免覆蓋使用者手動加的)
-    current_list = list(st.session_state.get('class_multiselect', []))
-    current_set = set(current_list)
-
-    # 2. 針對三個學制 Checkbox 進行增刪
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
-        
-        # 這裡會根據科別，回傳「該科班級」或「全校班級」
         target_classes = get_target_classes_for_dept(dept, grade, sys_name)
-        
         if is_checked:
-            # 勾選 -> 加入
-            current_set.update(target_classes)
+            for c in target_classes:
+                if c not in current_list: current_list.append(c)
         else:
-            # 取消 -> 移除
-            # 注意：這裡只移除「該科別該學制」的班級，避免誤刪手動加的其他班級
-            current_set.difference_update(target_classes)
+            for c in target_classes:
+                if c in current_list: current_list.remove(c)
     
-    # 3. 更新結果到 active_classes 和 widget
-    final_list = sorted(list(current_set))
-    st.session_state['active_classes'] = final_list
-    st.session_state['class_multiselect'] = final_list 
-
-    # 連動全選
+    st.session_state['active_classes'] = sorted(list(set(current_list)))
+    
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -537,32 +517,20 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 載入班級
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
         grade = st.session_state.get('grade_val')
-        dept = st.session_state.get('dept_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
         st.session_state['active_classes'] = final_list
         st.session_state['class_multiselect'] = final_list
 
-        # 反推 Checkbox
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
-        
-        reg_targets = get_target_classes_for_dept(dept, grade, "普通科")
-        prac_targets = get_target_classes_for_dept(dept, grade, "實用技能班")
-        coop_targets = get_target_classes_for_dept(dept, grade, "建教班")
-        
-        if reg_targets and any(c in final_list for c in reg_targets): st.session_state['cb_reg'] = True
-        if prac_targets and any(c in final_list for c in prac_targets): st.session_state['cb_prac'] = True
-        if coop_targets and any(c in final_list for c in coop_targets): st.session_state['cb_coop'] = True
-        
-        st.session_state['cb_all'] = (st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop'])
+        st.session_state['cb_all'] = False
     
     else:
         current_idx = st.session_state.get('edit_index')
@@ -587,7 +555,6 @@ def auto_load_data():
         st.session_state['current_uuid'] = None
         st.session_state['active_classes'] = []
         
-        # 預設勾選
         if dept not in DEPT_SPECIFIC_CONFIG:
             st.session_state['cb_reg'] = True
             st.session_state['cb_prac'] = True
@@ -756,12 +723,12 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            # 關鍵修正：Multiselect 選項必須包含當前選中的班級，否則會報錯
-            final_options = sorted(list(set(all_possible + st.session_state['active_classes'])))
+            valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
+            st.session_state['active_classes'] = valid_active
             
             selected_classes = st.multiselect(
                 "最終班級列表:",
-                options=final_options,
+                options=all_possible,
                 default=st.session_state['active_classes'],
                 key="class_multiselect",
                 on_change=on_multiselect_change
