@@ -200,13 +200,13 @@ def save_single_row(row_data, original_key=None):
     try:
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
-        # --- 修正 2.1: 新增備註1, 備註2 欄位 ---
+        # --- 新增備註1, 備註2 欄位 ---
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
         ws_sub.append_row(["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"])
 
     all_values = ws_sub.get_all_values()
     if not all_values:
-        # --- 修正 2.2: 確保無資料時，標題包含備註1, 備註2 ---
+        # --- 確保無資料時，標題包含備註1, 備註2 ---
         headers = ["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
         ws_sub.append_row(headers)
         all_values = [headers] 
@@ -224,7 +224,7 @@ def save_single_row(row_data, original_key=None):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_uuid = row_data.get('uuid')
     
-    # --- 修正 2.3: 儲存備註1, 備註2 ---
+    # --- 儲存備註1, 備註2 ---
     data_dict = {
         "uuid": target_uuid,
         "填報時間": timestamp,
@@ -883,15 +883,19 @@ def main():
                 input_course = st.text_input("課程名稱", value=current_form['course'])
             
             st.markdown("**第一優先**")
+            # --- Streamlit 側邊欄調整：審定字號和備註放同一列 ---
+            # 書名/冊次/出版社是必備欄位，分兩列顯示
             input_book1 = st.text_input("書名", value=current_form['book1'])
             bc1, bc2 = st.columns([1, 2])
             vol_opts = ["全", "上", "下", "I", "II", "III", "IV", "V", "VI"]
             vol1_idx = vol_opts.index(current_form['vol1']) if current_form['vol1'] in vol_opts else 0
             with bc1: input_vol1 = st.selectbox("冊次", vol_opts, index=vol1_idx)
             with bc2: input_pub1 = st.text_input("出版社", value=current_form['pub1'])
-            input_code1 = st.text_input("審定字號", value=current_form['code1']) 
-            # --- 修正 4: 新增備註1輸入欄位 ---
-            input_note1 = st.text_input("備註 (優先1)", value=current_form['note1']) 
+            
+            # 審定字號 和 備註 (優先1) 在同一列
+            c_code1, c_note1 = st.columns(2)
+            with c_code1: input_code1 = st.text_input("審定字號", value=current_form['code1']) 
+            with c_note1: input_note1 = st.text_input("備註 (優先1)", value=current_form['note1']) 
 
 
             st.markdown("**第二優先**")
@@ -900,9 +904,11 @@ def main():
             vol2_idx = vol_opts.index(current_form['vol2']) if current_form['vol2'] in vol_opts else 0
             with bc3: input_vol2 = st.selectbox("冊次(2)", vol_opts, index=vol2_idx)
             with bc4: input_pub2 = st.text_input("出版社(2)", value=current_form['pub2'])
-            input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) 
-            # --- 修正 5: 新增備註2輸入欄位 ---
-            input_note2 = st.text_input("備註 (優先2)", value=current_form['note2'])
+
+            # 審定字號(2) 和 備註(優先2) 在同一列
+            c_code2, c_note2 = st.columns(2)
+            with c_code2: input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) 
+            with c_note2: input_note2 = st.text_input("備註 (優先2)", value=current_form['note2'])
 
             
             st.markdown("##### 適用班級")
@@ -1014,7 +1020,6 @@ def main():
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
         # --- 修正 10: 調整 Streamlit data_editor 的欄寬配置 ---
-        # 總寬度: 100%
         # 欄位寬度: 
         #   冊次(1/2) = small
         #   審定字號(1/2) = small (與冊次同寬)
