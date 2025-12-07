@@ -121,6 +121,19 @@ def load_data(dept, semester, grade):
 
     display_rows = []
     
+    # --- 修正 2.1: 安全讀取函式，優先使用 iloc[0] 取值 ---
+    def safe_get_value(row, key, default=''):
+        val = row.get(key, default)
+        if isinstance(val, pd.Series):
+            try:
+                # 嘗試取出 Series 的第一個元素 (最安全的方式)
+                val = val.iloc[0]
+            except IndexError:
+                # 如果是空 Series，則返回 default
+                val = default
+        # 確保最終是字串
+        return str(val).strip()
+
     for _, row in target_courses.iterrows():
         c_name = row['課程名稱']
         c_type = row['課程類別']
@@ -134,9 +147,13 @@ def load_data(dept, semester, grade):
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
                 
-                # --- 修正 1.1: 僅使用 '備註1' 和 '備註2'，並確保數據是純字串 ---
-                備註1_val = str(s_row.get('備註1', '')).strip()
-                備註2_val = str(s_row.get('備註2', '')).strip()
+                # --- 修正 2.2: 使用 safe_get_value 讀取備註，避免 Series 錯誤 ---
+                備註1_val = safe_get_value(s_row, '備註1')
+                備註2_val = safe_get_value(s_row, '備註2')
+                
+                # 兼容舊版 '備註' 欄位（如果 '備註1' 不存在且 '備註' 存在）
+                if not 備註1_val and '備註' in s_row.index:
+                     備註1_val = safe_get_value(s_row, '備註')
 
                 display_rows.append({
                     "勾選": False,
@@ -166,9 +183,12 @@ def load_data(dept, semester, grade):
                     hist_class = h_row.get('適用班級', '')
                     final_class = hist_class if hist_class else default_class
                     
-                    # --- 修正 1.2: 僅使用 '備註1' 和 '備註2'，並確保數據是純字串 ---
-                    備註1_val = str(h_row.get('備註1', '')).strip()
-                    備註2_val = str(h_row.get('備註2', '')).strip()
+                    # --- 修正 2.3: 使用 safe_get_value 讀取備註，避免 Series 錯誤 ---
+                    備註1_val = safe_get_value(h_row, '備註1')
+                    備註2_val = safe_get_value(h_row, '備註2')
+                    
+                    if not 備註1_val and '備註' in h_row.index:
+                        備註1_val = safe_get_value(h_row, '備註')
 
                     display_rows.append({
                         "勾選": False,
@@ -784,6 +804,13 @@ def main():
             min-height: 60px !important;
             line-height: 1.6 !important;
             border-bottom: 1px solid #e0e0e0 !important;
+            opacity: 1 !important;
+        }
+        div[data-testid="stDataEditor"] table td[aria-disabled="true"],
+        div[data-testid="stDataEditor"] table td[data-disabled="true"] {
+            color: #000000 !important; 
+            -webkit-text-fill-color: #000000 !important;
+            background-color: #ffffff !important;
             opacity: 1 !important;
         }
         div[data-testid="stDataEditor"] table th {
