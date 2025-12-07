@@ -449,8 +449,8 @@ def create_pdf_report(dept):
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
                 # 備註欄位，使用 .get() 確保欄位不存在時不會出錯
-                #r1 = str(row.get('備註1', '')).strip() 
-                r1=100
+                r1 = str(row.get('備註1', '')).strip() 
+                
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
                 p2 = str(row.get('出版社(2)', '')).strip()
@@ -897,9 +897,9 @@ def main():
             
             # 審定字號 和 備註 (優先1) 在同一列
             c_code1, c_note1 = st.columns(2)
-            # 讓審定字號和備註與冊次/出版社保持視覺上的對齊（約 1/3, 2/3）
             with c_code1: input_code1 = st.text_input("審定字號", value=current_form['code1']) 
-            with c_note1: input_note1 = st.text_input("備註 (優先1)", value=current_form['note1']) 
+            # --- 修正 11: 側邊欄備註輸入框名稱 ---
+            with c_note1: input_note1 = st.text_input("備註1 (作者/單價)", value=current_form['note1']) 
 
 
             st.markdown("**第二優先**")
@@ -912,7 +912,8 @@ def main():
             # 審定字號(2) 和 備註(優先2) 在同一列
             c_code2, c_note2 = st.columns(2)
             with c_code2: input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) 
-            with c_note2: input_note2 = st.text_input("備註 (優先2)", value=current_form['note2'])
+            # --- 修正 12: 側邊欄備註輸入框名稱 ---
+            with c_note2: input_note2 = st.text_input("備註2 (作者/單價)", value=current_form['note2'])
 
             
             st.markdown("##### 適用班級")
@@ -1087,4 +1088,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
