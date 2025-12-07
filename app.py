@@ -9,15 +9,14 @@ import uuid
 
 def safe_note(row):
     """
-    最終穩定版：
-    - 自動抓出所有包含「備註」的欄位
-    - 自動處理 Series
-    - 自動移除「備註1 / 備註2」
-    - 自動移除 Name: 0, dtype: object
-    - 最後回傳 [r1, r2]
+    最終穩定版 v2：
+    - 自動抓所有「備註」欄位
+    - 處理 Series
+    - 用 replace 清掉 備註1/2
+    - 移除 dtype 尾巴
+    - ✅ 若 r1 == r2，自動清空 r2（避免雙重顯示）
     """
 
-    # ✅ 抓出所有實際存在的「備註欄位」（依出現順序）
     note_cols = [c for c in row.index if "備註" in str(c)]
 
     notes = []
@@ -25,34 +24,34 @@ def safe_note(row):
     for col in note_cols:
         val = row[col]
 
-        # ✅ 如果是 Series，只取第一格
         if isinstance(val, pd.Series):
             if not val.empty:
                 val = val.iloc[0]
             else:
                 val = ""
 
-        # ✅ 處理 None / NaN
         if val is None or str(val).lower() == "nan":
             val = ""
 
         val = str(val)
 
-        # ✅ 強制移除所有「備註1 / 備註2」
+        # 強制移除 備註1 / 備註2
         val = val.replace("備註1", "").replace("備註2", "")
 
-        # ✅ 強制移除 pandas Series 尾巴
+        # 強制移除 Name: 0, dtype: object
         if "dtype" in val:
             val = val.split("Name:")[0]
 
-        # ✅ 清理換行與多餘空白
         val = val.replace("\n", " ").strip()
 
         notes.append(val)
 
-    # ✅ 保證一定回傳兩格
     r1 = notes[0] if len(notes) > 0 else ""
     r2 = notes[1] if len(notes) > 1 else ""
+
+    # ✅ ✅ ✅ 重點修正：如果 r1 == r2，視為只有一則備註
+    if r1 and r2 and r1 == r2:
+        r2 = ""
 
     return [r1, r2]
 
@@ -1158,6 +1157,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
