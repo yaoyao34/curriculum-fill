@@ -251,12 +251,11 @@ def save_single_row(row_data, original_key=None):
         val = ""
         # 優先從 data_dict 尋找精確欄位
         if h in data_dict: val = data_dict[h]
-        elif h == "備註":    val = ""
         # 兼容舊版/不規範的欄位名稱
         elif h == "字號(1)": val = data_dict.get("字號(1)") or data_dict.get('審定字號(1)', '')
         elif h == "字號(2)": val = data_dict.get("字號(2)") or data_dict.get('審定字號(2)', '')
         elif h == "字號" or h == "審定字號": val = data_dict.get("字號(1)", "") # 應該不會用到，保留舊版邏輯
-        #elif h == "備註": val = data_dict.get("備註1", "") # 兼容舊版只有一個備註欄位的情況
+        elif h == "備註": val = data_dict.get("備註1", "") # 兼容舊版只有一個備註欄位的情況
         row_to_write.append(val)
 
     target_row_index = -1
@@ -363,7 +362,7 @@ def create_pdf_report(dept):
                 elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                 elif c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 # --- 處理備註欄位名稱 (與 load_data 邏輯一致) ---
-                elif  c.startswith('備註'): new_name = c
+                elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
@@ -373,8 +372,8 @@ def create_pdf_report(dept):
                 elif c == '出版社': new_headers.append('出版社(1)')
                 elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
                 # --- 處理備註欄位名稱 ---
-                elif c.startswith('備註'):   new_headers.append(c) 
-                
+                elif c == '備註' or c.startswith('備註'): new_headers.append('備註1')
+                else: new_headers.append(c)
         
         df_full = pd.DataFrame(rows, columns=new_headers)
         
@@ -1087,4 +1086,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
