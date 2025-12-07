@@ -876,24 +876,41 @@ def auto_load_data():
 
 # --- 8. 主程式 ---
 # --- 8. 主程式 ---
+# --- 8. 主程式 ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
-    st.title("📚 教科書填報系統")
-
-    # ... (CSS 樣式保持不變，省略以節省篇幅) ...
+    
+    # CSS 樣式
     st.markdown("""
         <style>
         html, body, [class*="css"] { font-family: 'Segoe UI', sans-serif; }
         div[data-testid="stDataEditor"] { background-color: #ffffff !important; }
-        /* ... 其他 CSS ... */
+        /* 調整按鈕垂直對齊，使其對齊標題 */
+        div[data-testid="column"] button {
+            margin-top: 1.5rem; 
+        }
         </style>
     """, unsafe_allow_html=True)
 
-    # ... (Session State 初始化保持不變) ...
+    # --- Session State 初始化 (保持不變) ---
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
-    # ... (其他初始化) ...
+    if 'current_uuid' not in st.session_state: st.session_state['current_uuid'] = None
+    if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
+    if 'form_data' not in st.session_state:
+        st.session_state['form_data'] = {
+            'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 'code1': '',
+            'book2': '', 'vol2': '全', 'pub2': '', 'code2': '', 'note1': '', 'note2': ''
+        }
+    if 'cb_all' not in st.session_state: st.session_state['cb_all'] = False
+    if 'cb_reg' not in st.session_state: st.session_state['cb_reg'] = False
+    if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
+    if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
+    if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
     if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
+    # ==========================================
+    # 1. 先執行 Sidebar 以取得 dept (科別)
+    # ==========================================
     with st.sidebar:
         st.header("1. 填報設定")
         dept_options = [
@@ -910,6 +927,37 @@ def main():
         if st.button("🔄 手動重載", type="secondary", use_container_width=True):
             auto_load_data()
 
+    # ==========================================
+    # 2. 頂部區域：標題 + PDF 按鈕 (修正位置)
+    # ==========================================
+    # 使用 columns 分割：左邊標題(4)，右邊按鈕(1)
+    top_col1, top_col2 = st.columns([4, 1])
+    
+    with top_col1:
+        st.title("📚 教科書填報系統")
+        
+    with top_col2:
+        # 按鈕移到這裡
+        if st.button("📄 轉 PDF 報表 (下載)", type="primary", use_container_width=True):
+            if dept:
+                with st.spinner(f"正在處理 {dept} PDF..."):
+                    pdf_report_bytes = create_pdf_report(dept)
+                    
+                    if pdf_report_bytes is not None:
+                        b64_bytes = base64.b64encode(pdf_report_bytes)
+                        b64 = b64_bytes.decode('latin-1') 
+                        # 下載連結
+                        href = f'<a href="data:application/pdf;base64,{b64}" download="{dept}_教科書總表.pdf" style="text-decoration:none; color:white; background-color:#b31412; padding:8px 12px; border-radius:5px; font-weight:bold; font-size:14px; display:block; text-align:center;">⬇️ 點此下載 PDF</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                        # ❌ 已移除成功訊息提示
+                    else:
+                        st.error("生成失敗，請檢查資料。")
+            else:
+                st.warning("請先選擇科別")
+
+    # ==========================================
+    # 3. 資料載入與主內容
+    # ==========================================
     if 'loaded' not in st.session_state and dept and sem and grade:
         auto_load_data()
 
@@ -921,7 +969,7 @@ def main():
             header_text = f"2. 修改第 {st.session_state['edit_index'] + 1} 列" if is_edit_mode else "2. 新增/插入課程"
             st.subheader(header_text)
             
-            # --- 刪除按鈕區塊 (保持不變) ---
+            # (側邊欄編輯區塊保持不變...)
             if is_edit_mode:
                 c_cancel, c_del = st.columns([1, 1])
                 with c_cancel:
@@ -954,7 +1002,7 @@ def main():
 
             current_form = st.session_state['form_data']
 
-            # --- 課程名稱輸入 ---
+            # 課程名稱
             course_list = get_course_list()
             course_index = 0
             if is_edit_mode and current_form['course'] in course_list:
@@ -965,9 +1013,7 @@ def main():
             else:
                 input_course = st.text_input("課程名稱", value=current_form['course'])
             
-            # ==========================================
-            #  👇👇👇 修改位置：將「適用班級」移到這裡 👇👇👇
-            # ==========================================
+            # 適用班級 (已移至上方)
             st.markdown("##### 適用班級")
             st.caption("👇 勾選學制 (勾'全部'選全校)")
             
@@ -979,9 +1025,7 @@ def main():
             
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
-            
             final_options = sorted(list(set(all_possible + st.session_state['active_classes'])))
-            
             selected_classes = st.multiselect(
                 "最終班級列表:",
                 options=final_options,
@@ -989,14 +1033,9 @@ def main():
                 key="class_multiselect",
                 on_change=on_multiselect_change
             )
-            
             input_class_str = ",".join(selected_classes)
-            # ==========================================
-            #  👆👆👆 修改結束 👆👆👆
-            # ==========================================
 
             st.markdown("**第一優先**")
-            # --- 第一優先書名 ---
             input_book1 = st.text_input("書名", value=current_form['book1'])
             bc1, bc2 = st.columns([1, 2])
             vol_opts = ["全", "上", "下", "I", "II", "III", "IV", "V", "VI"]
@@ -1008,9 +1047,7 @@ def main():
             with c_code1: input_code1 = st.text_input("審定字號", value=current_form['code1']) 
             with c_note1: input_note1 = st.text_input("備註1(作者/單價)", value=current_form['note1']) 
 
-
             st.markdown("**第二優先**")
-            # --- 第二優先書名 ---
             input_book2 = st.text_input("備選書名", value=current_form['book2'])
             bc3, bc4 = st.columns([1, 2])
             vol2_idx = vol_opts.index(current_form['vol2']) if current_form['vol2'] in vol_opts else 0
@@ -1021,20 +1058,14 @@ def main():
             with c_code2: input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) 
             with c_note2: input_note2 = st.text_input("備註2(作者/單價)", value=current_form['note2'])
 
-            
-            # --- 原本「適用班級」的位置 (已移除) ---
-
             if is_edit_mode:
                 if st.button("🔄 更新表格 (存檔)", type="primary", use_container_width=True):
-                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                         st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
                         idx = st.session_state['edit_index']
                         current_uuid = st.session_state.get('current_uuid')
-                        
-                        if not current_uuid:
-                            current_uuid = str(uuid.uuid4())
+                        if not current_uuid: current_uuid = str(uuid.uuid4())
                             
                         new_row = {
                             "uuid": current_uuid,
@@ -1044,10 +1075,8 @@ def main():
                             "教科書(優先1)": input_book1, "冊次(1)": input_vol1, "出版社(1)": input_pub1, "審定字號(1)": input_code1,
                             "教科書(優先2)": input_book2, "冊次(2)": input_vol2, "出版社(2)": input_pub2, "審定字號(2)": input_code2,
                             "適用班級": input_class_str,
-                            "備註1": input_note1,
-                            "備註2": input_note2 
+                            "備註1": input_note1, "備註2": input_note2 
                         }
-
                         with st.spinner("正在寫入資料庫..."):
                             save_single_row(new_row, st.session_state.get('original_key'))
 
@@ -1055,58 +1084,44 @@ def main():
                             if k in st.session_state['data'].columns:
                                 st.session_state['data'].at[idx, k] = v
                         st.session_state['data'].at[idx, "勾選"] = False
-
-                        # 清空 form_data
                         st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                         st.session_state['form_data']['vol1'] = '全'
                         st.session_state['form_data']['vol2'] = '全'
                         st.session_state['active_classes'] = []
-                        
                         st.session_state['edit_index'] = None
                         st.session_state['original_key'] = None
                         st.session_state['current_uuid'] = None
                         st.session_state['editor_key_counter'] += 1 
-                        
                         st.success("✅ 更新並存檔成功！")
                         st.rerun()
             else:
                 if st.button("➕ 加入表格 (存檔)", type="primary", use_container_width=True):
-                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                         st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
                         new_uuid = str(uuid.uuid4())
                         new_row = {
-                            "勾選": False,
-                            "uuid": new_uuid,
+                            "勾選": False, "uuid": new_uuid,
                             "科別": dept, "年級": grade, "學期": sem,
-                            "課程類別": "部定必修", 
-                            "課程名稱": input_course,
+                            "課程類別": "部定必修", "課程名稱": input_course,
                             "教科書(優先1)": input_book1, "冊次(1)": input_vol1, "出版社(1)": input_pub1, "審定字號(1)": input_code1,
                             "教科書(優先2)": input_book2, "冊次(2)": input_vol2, "出版社(2)": input_pub2, "審定字號(2)": input_code2,
-                            "適用班級": input_class_str,
-                            "備註1": input_note1, 
-                            "備註2": input_note2 
+                            "適用班級": input_class_str, "備註1": input_note1, "備註2": input_note2 
                         }
-                        
                         with st.spinner("正在寫入資料庫..."):
-                            save_single_row(new_row, None) # 新增無 key
-                            
+                            save_single_row(new_row, None)
                         st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
                         st.session_state['editor_key_counter'] += 1
-                        
-                        # 清空 form_data
                         st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                         st.session_state['form_data']['vol1'] = '全'
                         st.session_state['form_data']['vol2'] = '全'
                         st.session_state['active_classes'] = []
-                        
                         st.success(f"✅ 已存檔：{input_course}")
                         st.rerun()
 
         st.success(f"目前編輯：**{dept}** / **{grade}年級** / **第{sem}學期**")
         
-        # --- Data Editor (保持不變) ---
+        # --- Data Editor ---
         edited_df = st.data_editor(
             st.session_state['data'],
             num_rows="dynamic",
@@ -1116,20 +1131,15 @@ def main():
             on_change=on_editor_change,
             column_config={
                 "勾選": st.column_config.CheckboxColumn("勾選", width="small", disabled=False),
-                "uuid": None,
-                "科別": None, 
-                "年級": None, 
-                "學期": None,
+                "uuid": None, "科別": None, "年級": None, "學期": None,
                 "課程類別": st.column_config.TextColumn("類別", width="small", disabled=True),
                 "課程名稱": st.column_config.TextColumn("課程名稱", width="medium", disabled=True),
                 "適用班級": st.column_config.TextColumn("適用班級", width="medium", disabled=True), 
-                
                 "教科書(優先1)": st.column_config.TextColumn("教科書(1)", width="medium", disabled=True), 
                 "冊次(1)": st.column_config.TextColumn("冊次(1)", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
                 "備註1": st.column_config.TextColumn("備註(1)", width="small", disabled=True), 
-                
                 "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium", disabled=True),
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
@@ -1142,64 +1152,11 @@ def main():
                 "教科書(優先2)", "冊次(2)", "審定字號(2)", "出版社(2)", "備註2" 
             ]
         )
-
-        col_submit, _ = st.columns([1, 4])
-        with col_submit:
-            if st.button("📄 轉 PDF 報表 (下載)", type="primary", use_container_width=True):
-                with st.spinner(f"正在抓取 {dept} 所有資料並產生 PDF 報表..."):
-                    pdf_report_bytes = create_pdf_report(dept)
-                    
-                    if pdf_report_bytes is not None:
-                        b64_bytes = base64.b64encode(pdf_report_bytes)
-                        b64 = b64_bytes.decode('latin-1') 
-                        
-                        href = f'<a href="data:application/pdf;base64,{b64}" download="{dept}_教科書總表.pdf" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">⬇️ 點此下載完整 PDF 報表 (含上下學期/各年級)</a>'
-                        st.markdown(href, unsafe_allow_html=True)
-                        st.success("✅ PDF 報表已生成！")
-                    else:
-                        st.error("❌ PDF 報表生成失敗，請檢查資料或連線設定。**（若中文亂碼，請依 NOTE 註冊中文字體）**")
+        
+        # 底部按鈕區已移除
 
     else:
         st.info("👈 請先在左側選擇科別")
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
