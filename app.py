@@ -173,7 +173,7 @@ def get_course_list():
         return st.session_state['data']['課程名稱'].unique().tolist()
     return []
 
-# --- 4. 存檔 (單筆寫入) ---
+# --- 4. 存檔 (修正：欄位順序) ---
 def save_single_row(row_data, original_key=None):
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
@@ -181,6 +181,7 @@ def save_single_row(row_data, original_key=None):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
+        # 標題列順序：uuid, 填報時間, 科別, 學期, 年級 ...
         ws_sub.append_row(["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     all_values = ws_sub.get_all_values()
@@ -201,10 +202,14 @@ def save_single_row(row_data, original_key=None):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_uuid = row_data.get('uuid')
     
+    # 這裡的字典對應要非常小心，確保寫入順序正確
     data_dict = {
         "uuid": target_uuid,
         "填報時間": timestamp,
-        "科別": row_data['科別'], "學期": row_data['學期'], "年級": row_data['年級'], "課程名稱": row_data['課程名稱'],
+        "科別": row_data['科別'], 
+        "學期": row_data['學期'], # 確保學期是 1 或 2
+        "年級": row_data['年級'], # 確保年級是 1, 2, 3
+        "課程名稱": row_data['課程名稱'],
         "教科書(1)": row_data['教科書(優先1)'], "冊次(1)": row_data['冊次(1)'], "出版社(1)": row_data['出版社(1)'], "字號(1)": row_data['審定字號(1)'],
         "教科書(2)": row_data['教科書(優先2)'], "冊次(2)": row_data['冊次(2)'], "出版社(2)": row_data['出版社(2)'], "字號(2)": row_data['審定字號(2)'],
         "適用班級": row_data['適用班級'], "備註": row_data['備註']
@@ -213,6 +218,7 @@ def save_single_row(row_data, original_key=None):
     row_to_write = []
     for h in headers:
         val = ""
+        # 處理別名對應
         if h in data_dict: val = data_dict[h]
         elif h == "字號" or h == "審定字號": val = data_dict.get("字號(1)", "")
         elif h == "教科書": val = data_dict.get("教科書(1)", "")
@@ -271,7 +277,7 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# --- 5. 產生 HTML 報表 ---
+# --- 5. 產生 HTML 報表 (修正：欄位與簽章) ---
 def create_full_report(dept):
     client = get_connection()
     try:
@@ -318,8 +324,12 @@ def create_full_report(dept):
     df = df[df['科別'] == dept]
     if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
+    # 確保資料是最新的
     df = df.sort_values(by='填報時間')
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
+    
+    # 判斷簽章
+    is_vocational = dept in DEPT_SPECIFIC_CONFIG
     
     html = f"""
     <html>
@@ -333,9 +343,10 @@ def create_full_report(dept):
             table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
             th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; vertical-align: middle; }}
             th {{ background-color: #f2f2f2; }}
-            .book-cell {{ padding: 4px 0; }}
-            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 4px; }}
-            .footer {{ margin-top: 30px; text-align: right; }}
+            .book-cell {{ padding: 2px 0; }}
+            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 2px; display: block; }}
+            .footer {{ margin-top: 50px; display: flex; justify-content: space-between; }}
+            .footer div {{ width: 18%; border-bottom: 1px solid black; padding-bottom: 5px; text-align: left; margin-right: 5px; }}
         </style>
     </head>
     <body>
@@ -371,17 +382,20 @@ def create_full_report(dept):
                     """
                     grade_df = grade_df.sort_values(by='課程名稱')
                     for _, row in grade_df.iterrows():
+                        # Helper for cell content
                         def mk_cell(v1, v2):
                             v1_s = str(v1) if v1 else ""
                             if not v2: return f"<div class='book-cell'>{v1_s}</div>"
                             v2_s = str(v2) if v2 else ""
                             return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
 
+                        # 讀取第二本書 (相容欄位名)
                         b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
                         v2 = row.get('冊次(2)', '')
                         p2 = row.get('出版社(2)', '')
                         c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
                         
+                        # 讀取第一本書
                         b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
                         v1 = row.get('冊次(1)', '')
                         p1 = row.get('出版社(1)', '')
@@ -405,9 +419,18 @@ def create_full_report(dept):
                         """
                     html += "</tbody></table>"
 
+    # 簽章區塊修正
     html += """
         <div class="footer">
-            <p>填表人簽章：____________________ &nbsp;&nbsp;&nbsp; 科主任簽章：____________________</p>
+            <div>填表人：</div>
+            <div>召集人：</div>
+            <div>教務主任：</div>
+    """
+    if is_vocational:
+        html += "<div>實習主任：</div>"
+    
+    html += """
+            <div>校長：</div>
         </div>
     </body>
     </html>
@@ -429,12 +452,10 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     if not prefix: return []
     suffixes = []
     
-    # 修正重點：判斷是否為專業科系
+    # 修正：專業科系抓該科，共同科目抓全部
     if dept in DEPT_SPECIFIC_CONFIG:
-        # 專業科系：只抓該科設定
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
-        # 共同科目：抓全校該學制設定
         suffixes = ALL_SUFFIXES.get(sys_name, [])
         
     if str(grade) == "3" and sys_name == "建教班": return []
@@ -444,6 +465,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
+    # 這裡必須從 'class_multiselect' 取目前的值
     current_list = list(st.session_state.get('class_multiselect', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
@@ -512,31 +534,17 @@ def on_editor_change():
         
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        
         grade = st.session_state.get('grade_val')
-        valid_classes = get_all_possible_classes(grade) if grade else []
-        final_list = [c for c in class_list if c in valid_classes]
+        # 這裡不進行過濾，直接填入
         
-        st.session_state['active_classes'] = final_list
-        st.session_state['class_multiselect'] = final_list
+        st.session_state['active_classes'] = class_list
+        st.session_state['class_multiselect'] = class_list
 
-        # 反推 Checkbox 狀態邏輯 (修正版)
-        dept = st.session_state.get('dept_val')
-        
+        # 反推 Checkbox (簡單版)
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
-        
-        reg_targets = get_target_classes_for_dept(dept, grade, "普通科")
-        prac_targets = get_target_classes_for_dept(dept, grade, "實用技能班")
-        coop_targets = get_target_classes_for_dept(dept, grade, "建教班")
-        
-        # 只要 final_list 中包含任一個該學制的班級，就勾選
-        if reg_targets and any(c in final_list for c in reg_targets): st.session_state['cb_reg'] = True
-        if prac_targets and any(c in final_list for c in prac_targets): st.session_state['cb_prac'] = True
-        if coop_targets and any(c in final_list for c in coop_targets): st.session_state['cb_coop'] = True
-        
-        st.session_state['cb_all'] = (st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop'])
+        st.session_state['cb_all'] = False
     
     else:
         current_idx = st.session_state.get('edit_index')
@@ -561,19 +569,16 @@ def auto_load_data():
         st.session_state['current_uuid'] = None
         st.session_state['active_classes'] = []
         
-        # 預設勾選
         if dept not in DEPT_SPECIFIC_CONFIG:
-            # 共同科目: 預設全勾
             st.session_state['cb_reg'] = True
             st.session_state['cb_prac'] = True
             st.session_state['cb_coop'] = True
             st.session_state['cb_all'] = True
         else:
-            # 專業科目: 預設全勾
             st.session_state['cb_reg'] = True
-            st.session_state['cb_prac'] = True
-            st.session_state['cb_coop'] = True
-            st.session_state['cb_all'] = True
+            st.session_state['cb_prac'] = False
+            st.session_state['cb_coop'] = False
+            st.session_state['cb_all'] = False
             
         update_class_list_from_checkboxes()
         st.session_state['editor_key_counter'] += 1
@@ -632,7 +637,6 @@ def main():
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
     if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
-    
     if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
     with st.sidebar:
