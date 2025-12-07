@@ -95,7 +95,7 @@ def load_data(dept, semester, grade):
                     elif c == '出版社': new_headers.append('出版社(1)')
                     elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
                     # --- 處理備註欄位名稱 ---
-                    elif c == '備註': new_headers.append('備註1')
+                    elif c == '備註': new_headers.append('備註12')
                     else: new_headers.append(c)
             return pd.DataFrame(rows, columns=new_headers)
 
@@ -1089,3 +1089,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
