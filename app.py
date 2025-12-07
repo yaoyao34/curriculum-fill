@@ -42,7 +42,7 @@ def get_connection():
         except json.JSONDecodeError:
             st.error("Secrets 格式錯誤")
             return None
-        except ValueError: # 處理可能不是 JSON 的情況
+        except ValueError as e: # 處理可能不是 JSON 的情況
             try:
                 # 假設 GCP_CREDENTIALS 是一個 Base64 編碼的 JSON
                 creds_json_str = base64.b64decode(st.secrets["GCP_CREDENTIALS"]).decode('utf-8')
@@ -135,7 +135,6 @@ def load_data(dept, semester, grade):
             for _, s_row in sub_matches.iterrows():
                 
                 # --- 修正 1.1: 僅使用 '備註1' 和 '備註2'，並確保數據是純字串 ---
-                # 備註1_val = str(s_row.get('備註1', '') or s_row.get('備註', '')).strip() <--- 這是錯誤的根源
                 備註1_val = str(s_row.get('備註1', '')).strip()
                 備註2_val = str(s_row.get('備註2', '')).strip()
 
@@ -646,6 +645,7 @@ def update_class_list_from_checkboxes():
         st.session_state['cb_all'] = False
 
 def toggle_all_checkboxes():
+    # 修正 14: 在使用 st.session_state 之前，先檢查鍵是否存在 (在 main() 裡已初始化，這裡會安全)
     new_state = st.session_state['cb_all']
     st.session_state['cb_reg'] = new_state
     st.session_state['cb_prac'] = new_state
@@ -798,10 +798,10 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
+    # 🚨 修正 1: 在應用程式啟動時，預先初始化所有 Session State 鍵
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
     if 'current_uuid' not in st.session_state: st.session_state['current_uuid'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
-    # --- 修正 8: 初始化 form_data，包含備註1/2 ---
     if 'form_data' not in st.session_state:
         st.session_state['form_data'] = {
             'course': '', 'book1': '', 'vol1': '全', 'pub1': '', 'code1': '',
