@@ -362,7 +362,7 @@ def create_pdf_report(dept):
                 elif c == '出版社': new_headers.append('出版社(1)')
                 elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
                 # --- 修正 3.2: 處理備註欄位名稱 ---
-                elif c == '備註' or c.startswith('備註'): new_headers.append('1備註')
+                elif c == '備註' or c.startswith('備註'): new_headers.append('備註1')
                 else: new_headers.append(c)
 
         
@@ -1090,6 +1090,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
