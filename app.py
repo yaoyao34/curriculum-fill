@@ -54,6 +54,7 @@ def get_connection():
     else:
         try:
             creds = Credentials.from_service_account_file('credentials.json', scopes=scope)
+            pass
         except Exception:
             st.error("找不到金鑰")
             return None
@@ -134,7 +135,6 @@ def load_data(dept, semester, grade):
             for _, s_row in sub_matches.iterrows():
                 
                 # --- 修正 1.1: 使用 next() 尋找第一個非空值，避免 ValueError ---
-                # 確保返回的是純字串，如果所有備註欄位都找不到值，則返回空字串 ''
                 備註1_val = next((str(s_row.get(col, '')).strip() 
                                   for col in ['備註1', '備註'] 
                                   if str(s_row.get(col, '')).strip()), '').strip()
@@ -476,10 +476,6 @@ def create_pdf_report(dept):
                     # 確保所有輸入都是非空字串
                     val1 = val1 if val1 else ""
                     val2 = val2 if val2 else ""
-                    
-                    # 徹底檢查 val1, val2 是否為 Pandas/NoneType (應該不會了，但以防萬一)
-                    if isinstance(val1, (pd.Series, pd.DataFrame)) or isinstance(val2, (pd.Series, pd.DataFrame)):
-                         return ""
                     
                     if not val1 and not val2:
                         return ""
