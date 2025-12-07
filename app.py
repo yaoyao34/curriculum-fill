@@ -501,7 +501,7 @@ def create_pdf_report(dept):
     # --- 2. PDF 生成 ---
     # 直向 A4
     pdf = PDF(orientation='P', unit='mm', format='A4') 
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_auto_page_break(auto=True, margin=10)
     
     try:
         pdf.add_font(CHINESE_FONT, '', 'NotoSansCJKtc-Regular.ttf', uni=True) 
@@ -1203,6 +1203,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
