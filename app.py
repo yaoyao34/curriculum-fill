@@ -146,7 +146,8 @@ def load_data(dept, semester, grade):
                     "冊次(2)": s_row.get('冊次(2)', ''), 
                     "出版社(2)": s_row.get('出版社(2)', ''), 
                     "審定字號(2)": s_row.get('審定字號(2)', '') or s_row.get('字號(2)', ''),
-                    "備註1": s_row.get('備註1', '') or s_row.get('備註', ''), # 兼容舊版備註欄位
+                    # 確保這裡的鍵名是 '備註1' 和 '備註2'，以便後續正確獲取
+                    "備註1": s_row.get('備註1', '') or s_row.get('備註', ''), 
                     "備註2": s_row.get('備註2', '')
                 })
         else:
@@ -351,7 +352,7 @@ def create_pdf_report(dept):
                 elif c == '出版社': new_name = f"出版社({seen[c]})"
                 elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
                 elif c == '教科書': new_name = f"教科書(優先{seen[c]})"
-                # --- 修正 3.1: 處理備註欄位名稱 (與 load_data 邏輯一致) ---
+                # --- 處理備註欄位名稱 (與 load_data 邏輯一致) ---
                 elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
                 new_headers.append(new_name)
             else:
@@ -361,7 +362,7 @@ def create_pdf_report(dept):
                 elif c == '冊次': new_headers.append('冊次(1)')
                 elif c == '出版社': new_headers.append('出版社(1)')
                 elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
-                # --- 修正 3.2: 處理備註欄位名稱 ---
+                # --- 處理備註欄位名稱 ---
                 elif c == '備註' or c.startswith('備註'): new_headers.append('備註1')
                 else: new_headers.append(c)
         
@@ -448,7 +449,7 @@ def create_pdf_report(dept):
                 v1 = str(row.get('冊次(1)', '')).strip()
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
-                # 備註欄位，使用 .get() 確保欄位不存在時不會出錯
+                # 備註欄位：確保只從 DF 中取出值，不進行任何硬編碼的欄位名檢查。
                 r1 = str(row.get('備註1', '')).strip() 
                 
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
@@ -898,8 +899,7 @@ def main():
             # 審定字號 和 備註 (優先1) 在同一列
             c_code1, c_note1 = st.columns(2)
             with c_code1: input_code1 = st.text_input("審定字號", value=current_form['code1']) 
-            # --- 修正 11: 側邊欄備註輸入框名稱 ---
-            with c_note1: input_note1 = st.text_input("備註1 (作者/單價)", value=current_form['note1']) 
+            with c_note1: input_note1 = st.text_input("備註1(作者/單價)", value=current_form['note1']) 
 
 
             st.markdown("**第二優先**")
@@ -912,8 +912,7 @@ def main():
             # 審定字號(2) 和 備註(優先2) 在同一列
             c_code2, c_note2 = st.columns(2)
             with c_code2: input_code2 = st.text_input("審定字號(2)", value=current_form['code2']) 
-            # --- 修正 12: 側邊欄備註輸入框名稱 ---
-            with c_note2: input_note2 = st.text_input("備註2 (作者/單價)", value=current_form['note2'])
+            with c_note2: input_note2 = st.text_input("備註2(作者/單價)", value=current_form['note2'])
 
             
             st.markdown("##### 適用班級")
