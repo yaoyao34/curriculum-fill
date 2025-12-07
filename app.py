@@ -134,7 +134,6 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
-                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 if not exact_match.empty:
                     target_rows = exact_match
@@ -173,12 +172,8 @@ def get_course_list():
         return st.session_state['data']['課程名稱'].unique().tolist()
     return []
 
-# --- 4. 存檔 (單筆寫入) ---
+# --- 4. 存檔 (單筆寫入/更新) ---
 def save_single_row(row_data, original_key=None):
-    """
-    將單筆資料寫入 Google Sheets。
-    如果提供了 original_key，會嘗試尋找並覆蓋舊資料；否則直接新增。
-    """
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
     try:
@@ -187,16 +182,13 @@ def save_single_row(row_data, original_key=None):
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
         ws_sub.append_row(["填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
-    # 取得現有資料以進行比對
     all_values = ws_sub.get_all_values()
     if not all_values:
-        headers = [] # Should not happen if sheet exists
+        headers = []
     else:
         headers = all_values[0]
 
-    # 建立標題索引對照表
     col_map = {h: i for i, h in enumerate(headers)}
-    
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     row_to_write = [
@@ -209,18 +201,15 @@ def save_single_row(row_data, original_key=None):
 
     target_row_index = -1
 
-    # 如果有原始資料 key，嘗試尋找舊資料
     if original_key:
-        # 從最後一筆開始往前找
         for i in range(len(all_values) - 1, 0, -1):
             row = all_values[i]
             try:
-                # 這裡的比對邏輯要包含 班級，這樣才能區分不同班級的同名課程
                 if (row[col_map['科別']] == original_key['科別'] and
                     str(row[col_map['學期']]) == str(original_key['學期']) and
                     str(row[col_map['年級']]) == str(original_key['年級']) and
                     row[col_map['課程名稱']] == original_key['課程名稱'] and
-                    row[col_map['適用班級']] == original_key['適用班級']): # 關鍵：比對班級
+                    row[col_map['適用班級']] == original_key['適用班級']):
                     
                     target_row_index = i + 1 
                     break
@@ -234,6 +223,43 @@ def save_single_row(row_data, original_key=None):
         ws_sub.append_row(row_to_write)
         
     return True
+
+# --- 4.5 刪除功能 (資料庫刪除) ---
+def delete_row_from_db(original_key):
+    """從 Submission_Records 中刪除指定資料"""
+    if not original_key: return False
+    
+    client = get_connection()
+    sh = client.open(SPREADSHEET_NAME)
+    try:
+        ws_sub = sh.worksheet(SHEET_SUBMISSION)
+    except:
+        return False
+        
+    all_values = ws_sub.get_all_values()
+    if not all_values: return False
+    headers = all_values[0]
+    col_map = {h: i for i, h in enumerate(headers)}
+    
+    target_row_index = -1
+    for i in range(len(all_values) - 1, 0, -1):
+        row = all_values[i]
+        try:
+            if (row[col_map['科別']] == original_key['科別'] and
+                str(row[col_map['學期']]) == str(original_key['學期']) and
+                str(row[col_map['年級']]) == str(original_key['年級']) and
+                row[col_map['課程名稱']] == original_key['課程名稱'] and
+                row[col_map['適用班級']] == original_key['適用班級']):
+                
+                target_row_index = i + 1
+                break
+        except KeyError:
+            continue
+            
+    if target_row_index > 0:
+        ws_sub.delete_rows(target_row_index)
+        return True
+    return False
 
 # --- 5. 產生 HTML 報表 ---
 def create_full_report(dept):
@@ -283,7 +309,6 @@ def create_full_report(dept):
     if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
     df = df.sort_values(by='填報時間')
-    # 這裡的去重包含適用班級
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
     html = f"""
@@ -396,7 +421,8 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    current_list = list(st.session_state.get('active_classes', []))
+    # 關鍵修正：必須從 'class_multiselect' 取目前的值
+    current_list = list(st.session_state.get('class_multiselect', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
@@ -408,8 +434,10 @@ def update_class_list_from_checkboxes():
             for c in target_classes:
                 if c in current_list: current_list.remove(c)
     
-    st.session_state['active_classes'] = sorted(list(set(current_list)))
-    
+    final_list = sorted(list(set(current_list)))
+    st.session_state['active_classes'] = final_list
+    st.session_state['class_multiselect'] = final_list 
+
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -443,16 +471,6 @@ def on_editor_change():
         st.session_state['edit_index'] = target_idx
         
         row_data = st.session_state['data'].iloc[target_idx]
-        
-        # 記錄原始 key
-        st.session_state['original_key'] = {
-            '科別': row_data['科別'],
-            '年級': str(row_data['年級']),
-            '學期': str(row_data['學期']),
-            '課程名稱': row_data['課程名稱'],
-            '適用班級': str(row_data.get('適用班級', ''))
-        }
-        
         st.session_state['form_data'] = {
             'course': row_data["課程名稱"],
             'book1': row_data.get("教科書(優先1)", ""), 'vol1': row_data.get("冊次(1)", ""), 'pub1': row_data.get("出版社(1)", ""), 'code1': row_data.get("審定字號(1)", ""),
@@ -481,7 +499,6 @@ def on_editor_change():
              if edits[str(current_idx)].get("勾選") is False:
                  st.session_state['data'].at[current_idx, "勾選"] = False
                  st.session_state['edit_index'] = None
-                 st.session_state['original_key'] = None
 
 def auto_load_data():
     dept = st.session_state.get('dept_val')
@@ -495,6 +512,10 @@ def auto_load_data():
         st.session_state['edit_index'] = None
         st.session_state['original_key'] = None
         st.session_state['active_classes'] = []
+        
+        # 關鍵修正：切換科別時，強制清空 class_multiselect，避免帶有舊班級
+        st.session_state['class_multiselect'] = []
+        
         st.session_state['cb_reg'] = True
         st.session_state['cb_prac'] = True
         st.session_state['cb_coop'] = True
@@ -550,6 +571,7 @@ def main():
     """, unsafe_allow_html=True)
 
     if 'edit_index' not in st.session_state: st.session_state['edit_index'] = None
+    if 'original_key' not in st.session_state: st.session_state['original_key'] = None
     if 'active_classes' not in st.session_state: st.session_state['active_classes'] = []
     if 'form_data' not in st.session_state:
         st.session_state['form_data'] = {
@@ -604,6 +626,11 @@ def main():
                 with c_del:
                     if st.button("🗑️ 刪除此列", type="primary"):
                         idx = st.session_state['edit_index']
+                        
+                        # 呼叫資料庫刪除
+                        with st.spinner("從資料庫刪除中..."):
+                            delete_row_from_db(st.session_state.get('original_key'))
+                        
                         st.session_state['data'] = st.session_state['data'].drop(idx).reset_index(drop=True)
                         st.session_state['edit_index'] = None
                         st.session_state['original_key'] = None
@@ -611,12 +638,7 @@ def main():
                         st.session_state['form_data'] = {k: '' for k in st.session_state['form_data']}
                         st.session_state['editor_key_counter'] += 1
                         
-                        # 刪除也要存檔
-                        with st.spinner("同步資料庫..."):
-                            # 這裡僅前端刪除
-                            pass
-                        
-                        st.success("已從列表中移除 (資料庫紀錄仍保留)")
+                        st.success("已刪除！")
                         st.rerun()
 
             current_form = st.session_state['form_data']
@@ -660,6 +682,7 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
+            # 防呆
             valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
             st.session_state['active_classes'] = valid_active
             
