@@ -60,6 +60,22 @@ def get_connection():
             return None
     return gspread.authorize(creds)
 
+def safe_note(val):
+    # ✅ 如果是 Pandas Series → 只取第一格
+    if isinstance(val, pd.Series):
+        val = val.iloc[0]
+
+    # ✅ 轉字串
+    val = str(val)
+
+    # ✅ 若開頭有「備註1」或「備註2」才移除
+    if val.startswith("備註1"):
+        val = val[len("備註1"):].strip()
+    elif val.startswith("備註2"):
+        val = val[len("備註2"):].strip()
+
+    return val.strip()
+
 # --- 2. 資料讀取 ---
 def load_data(dept, semester, grade):
     client = get_connection()
@@ -1113,6 +1129,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
