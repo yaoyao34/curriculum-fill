@@ -463,6 +463,10 @@ def create_pdf_report(dept):
                     val1 = val1 if val1 else ""
                     val2 = val2 if val2 else ""
                     
+                    # 徹底檢查 val1, val2 是否為 Pandas/NoneType (應該不會了，但以防萬一)
+                    if isinstance(val1, (pd.Series, pd.DataFrame)) or isinstance(val2, (pd.Series, pd.DataFrame)):
+                         return ""
+                    
                     if not val1 and not val2:
                         return ""
                     elif not val2:
