@@ -201,11 +201,14 @@ def save_single_row(row_data, original_key=None):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_uuid = row_data.get('uuid')
     
-    # 修正：確保寫入時的 Key 與讀取時一致 (避免欄位空白)
+    # 確保順序正確：學期在前，年級在後 (對應 CSV)
     data_dict = {
         "uuid": target_uuid,
         "填報時間": timestamp,
-        "科別": row_data['科別'], "學期": row_data['學期'], "年級": row_data['年級'], "課程名稱": row_data['課程名稱'],
+        "科別": row_data['科別'], 
+        "學期": row_data['學期'], 
+        "年級": row_data['年級'], 
+        "課程名稱": row_data['課程名稱'],
         "教科書(1)": row_data['教科書(優先1)'], "冊次(1)": row_data['冊次(1)'], "出版社(1)": row_data['出版社(1)'], "字號(1)": row_data['審定字號(1)'],
         "教科書(2)": row_data['教科書(優先2)'], "冊次(2)": row_data['冊次(2)'], "出版社(2)": row_data['出版社(2)'], "字號(2)": row_data['審定字號(2)'],
         "適用班級": row_data['適用班級'], "備註": row_data['備註']
@@ -271,7 +274,7 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# --- 5. 產生 HTML 報表 (修正：簽章 & 欄位讀取) ---
+# --- 5. 產生 HTML 報表 ---
 def create_full_report(dept):
     client = get_connection()
     try:
@@ -283,7 +286,6 @@ def create_full_report(dept):
         headers = data[0]
         rows = data[1:]
         
-        # 簡易處理重複標頭
         seen = {}
         new_headers = []
         for col in headers:
@@ -298,12 +300,16 @@ def create_full_report(dept):
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
-                # 關鍵修正：這裡要對應 save_single_row 寫入的標頭
+                # 這裡對應 CSV 的標頭
                 if c == '教科書(1)': new_headers.append('教科書(優先1)')
                 elif c == '教科書': new_headers.append('教科書(優先1)')
+                elif c == '冊次(1)': new_headers.append('冊次(1)') # 修正讀取key
                 elif c == '冊次': new_headers.append('冊次(1)')
+                elif c == '出版社(1)': new_headers.append('出版社(1)')
                 elif c == '出版社': new_headers.append('出版社(1)')
-                elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
+                elif c == '字號(1)': new_headers.append('審定字號(1)')
+                elif c == '字號': new_headers.append('審定字號(1)')
+                elif c == '審定字號': new_headers.append('審定字號(1)')
                 else: new_headers.append(c)
         
         df = pd.DataFrame(rows, columns=new_headers)
@@ -382,7 +388,7 @@ def create_full_report(dept):
                             v2_s = str(v2) if v2 else ""
                             return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
 
-                        # 修正讀取邏輯：確保優先讀取 '教科書(優先1)'
+                        # 修正：確保讀取正確的 key (繁體 優先1)
                         b1 = row.get('教科書(優先1)') or row.get('教科書(1)') or row.get('教科書') or ''
                         v1 = row.get('冊次(1)') or row.get('冊次') or ''
                         p1 = row.get('出版社(1)') or row.get('出版社') or ''
@@ -411,10 +417,9 @@ def create_full_report(dept):
                         """
                     html += "</tbody></table>"
 
-    # 新增簽章欄位
     html += """
         <div class="footer">
-            <div>填表人簽章：</div>
+            <div>填表人：</div>
             <div>召集人：</div>
             <div>教務主任：</div>
     """
@@ -440,13 +445,16 @@ def get_all_possible_classes(grade):
     return sorted(list(set(classes)))
 
 def get_target_classes_for_dept(dept, grade, sys_name):
+    # 邏輯：專業科系抓該科，共同科目抓全校
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     suffixes = []
+    
     if dept in DEPT_SPECIFIC_CONFIG:
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
         suffixes = ALL_SUFFIXES.get(sys_name, [])
+        
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
@@ -522,9 +530,11 @@ def on_editor_change():
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
         grade = st.session_state.get('grade_val')
-        # 直接填入，不過濾
-        st.session_state['active_classes'] = class_list
-        st.session_state['class_multiselect'] = class_list
+        valid_classes = get_all_possible_classes(grade) if grade else []
+        final_list = [c for c in class_list if c in valid_classes]
+        
+        st.session_state['active_classes'] = final_list
+        st.session_state['class_multiselect'] = final_list
 
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
@@ -622,6 +632,7 @@ def main():
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
     if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
+    
     if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
     with st.sidebar:
@@ -651,6 +662,7 @@ def main():
             header_text = f"2. 修改第 {st.session_state['edit_index'] + 1} 列" if is_edit_mode else "2. 新增/插入課程"
             st.subheader(header_text)
             
+            # 刪除按鈕
             if is_edit_mode:
                 c_cancel, c_del = st.columns([1, 1])
                 with c_cancel:
@@ -720,15 +732,12 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            # 防呆
             valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
-            # 如果資料庫的班級不在標準清單裡，也要保留，避免不見
-            diff = [c for c in st.session_state['active_classes'] if c not in all_possible]
-            final_options = sorted(list(set(all_possible + diff)))
+            st.session_state['active_classes'] = valid_active
             
             selected_classes = st.multiselect(
                 "最終班級列表:",
-                options=final_options,
+                options=all_possible,
                 default=st.session_state['active_classes'],
                 key="class_multiselect",
                 on_change=on_multiselect_change
@@ -739,6 +748,7 @@ def main():
 
             if is_edit_mode:
                 if st.button("🔄 更新表格 (存檔)", type="primary", use_container_width=True):
+                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                          st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
@@ -779,6 +789,7 @@ def main():
                         st.rerun()
             else:
                 if st.button("➕ 加入表格 (存檔)", type="primary", use_container_width=True):
+                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                          st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
