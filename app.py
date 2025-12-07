@@ -515,7 +515,7 @@ def create_pdf_report(dept):
     
     # --- 欄位寬度 (直向 A4 優化版) ---
     # 總寬 190mm
-    col_widths = [19, 60, 36, 10, 17, 17, 31] 
+    col_widths = [19, 59, 36, 10, 17, 23, 23] 
     
     col_names = [
         "課程名稱", "適用班級", 
@@ -1203,6 +1203,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
