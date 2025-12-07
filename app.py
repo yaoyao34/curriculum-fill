@@ -134,10 +134,8 @@ def load_data(dept, semester, grade):
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
                 
-                # --- 修正 1.1: 使用 next() 尋找第一個非空值，避免 ValueError ---
-                備註1_val = next((str(s_row.get(col, '')).strip() 
-                                  for col in ['備註1', '備註'] 
-                                  if str(s_row.get(col, '')).strip()), '').strip()
+                # --- 修正 1.1: 僅使用 '備註1' 和 '備註2'，避免 ValueError ---
+                備註1_val = str(s_row.get('備註1', '')).strip()
                 備註2_val = str(s_row.get('備註2', '')).strip()
 
                 display_rows.append({
@@ -168,10 +166,8 @@ def load_data(dept, semester, grade):
                     hist_class = h_row.get('適用班級', '')
                     final_class = hist_class if hist_class else default_class
                     
-                    # --- 修正 1.2: 簡化安全讀取邏輯，避免 ambigious ValueError ---
-                    備註1_val = next((str(h_row.get(col, '')).strip() 
-                                      for col in ['備註1', '備註'] 
-                                      if str(h_row.get(col, '')).strip()), '').strip()
+                    # --- 修正 1.2: 僅使用 '備註1' 和 '備註2'，避免 ValueError ---
+                    備註1_val = str(h_row.get('備註1', '')).strip()
                     備註2_val = str(h_row.get('備註2', '')).strip()
 
                     display_rows.append({
