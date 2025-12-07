@@ -60,21 +60,32 @@ def get_connection():
             return None
     return gspread.authorize(creds)
 
-def safe_note(val):
+def safe_note(row, *keys):
+    """
+    從 row 中依序嘗試多個 key 取值，
+    並安全處理 Series / None / 多餘「備註X」字首
+    """
+    val = ""
+
+    for k in keys:
+        if k in row and row[k] not in [None, ""]:
+            val = row[k]
+            break
+
     # ✅ 如果是 Pandas Series → 只取第一格
     if isinstance(val, pd.Series):
         val = val.iloc[0]
 
-    # ✅ 轉字串
-    val = str(val)
+    val = str(val).strip()
 
-    # ✅ 若開頭有「備註1」或「備註2」才移除
+    # ✅ 只移除「開頭」的 備註1 / 備註2，不動中間
     if val.startswith("備註1"):
         val = val[len("備註1"):].strip()
     elif val.startswith("備註2"):
         val = val[len("備註2"):].strip()
 
-    return val.strip()
+    return val
+
 
 # --- 2. 資料讀取 ---
 def load_data(dept, semester, grade):
@@ -496,13 +507,13 @@ def create_pdf_report(dept):
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
                 # 備註欄位：確保只從 DF 中取出值
                # r1 = str(row.get('備註1', '')).strip() 
-                r1 = safe_note(row.get('備註1', ''))
+                r1 = safe_note(row, '備註1', '備註(1)', '備註')
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
                 #r2 = str(row.get('備註2', '')).strip()
-                r2 = safe_note(row.get('備註2', ''))
+                r2 = safe_note(row, '備註2', '備註(2)')
                 # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
                     # 確保所有輸入都是非空字串
@@ -1129,6 +1140,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
