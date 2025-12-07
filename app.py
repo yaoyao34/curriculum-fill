@@ -135,6 +135,7 @@ def load_data(dept, semester, grade):
             for _, s_row in sub_matches.iterrows():
                 
                 # --- 修正 1.1: 僅使用 '備註1' 和 '備註2'，並確保數據是純字串 ---
+                # 備註1_val = str(s_row.get('備註1', '') or s_row.get('備註', '')).strip() <--- 這是錯誤的根源
                 備註1_val = str(s_row.get('備註1', '')).strip()
                 備註2_val = str(s_row.get('備註2', '')).strip()
 
@@ -554,7 +555,7 @@ def create_pdf_report(dept):
                     start_x += w 
                 
                 # 移動 Y 座標到下一行
-                pdf.set_y(start_y + row_height)
+                    pdf.set_y(start_y + row_height)
                     
             pdf.ln(5) 
     
@@ -783,13 +784,6 @@ def main():
             min-height: 60px !important;
             line-height: 1.6 !important;
             border-bottom: 1px solid #e0e0e0 !important;
-            opacity: 1 !important;
-        }
-        div[data-testid="stDataEditor"] table td[aria-disabled="true"],
-        div[data-testid="stDataEditor"] table td[data-disabled="true"] {
-            color: #000000 !important; 
-            -webkit-text-fill-color: #000000 !important;
-            background-color: #ffffff !important;
             opacity: 1 !important;
         }
         div[data-testid="stDataEditor"] table th {
