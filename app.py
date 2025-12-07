@@ -90,8 +90,7 @@ def load_data(dept, semester, grade):
                     new_headers.append(new_name)
                 else:
                     seen[c] = 1
-                    if c == '教科書(1)': new_headers.append('教科書(優先1)')
-                    elif c == '教科書': new_headers.append('教科書(優先1)')
+                    if c == '教科書': new_headers.append('教科書(優先1)')
                     elif c == '冊次': new_headers.append('冊次(1)')
                     elif c == '出版社': new_headers.append('出版社(1)')
                     elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
@@ -133,12 +132,11 @@ def load_data(dept, semester, grade):
 
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
-                # --- 修正 1.1: 檢查欄位是否存在後才讀取，避免誤讀其他欄位 ---
-                has_備註1 = '備註1' in s_row.index and s_row['備註1'] is not None and s_row['備註1'] != ''
-                has_備註2 = '備註2' in s_row.index and s_row['備註2'] is not None and s_row['備註2'] != ''
                 
-                備註1_val = s_row['備註1'] if has_備註1 else (s_row.get('備註', '') if '備註' in s_row.index else '')
-                備註2_val = s_row['備註2'] if has_備註2 else ''
+                # --- 修正 1.1: 簡化安全讀取邏輯，避免 ambigious ValueError ---
+                # 使用 .get() 確保欄位不存在時返回空字串，而不是嘗試索引一個不存在的鍵
+                備註1_val = str(s_row.get('備註1', '') or s_row.get('備註', '')).strip()
+                備註2_val = str(s_row.get('備註2', '')).strip()
 
                 display_rows.append({
                     "勾選": False,
@@ -168,12 +166,9 @@ def load_data(dept, semester, grade):
                     hist_class = h_row.get('適用班級', '')
                     final_class = hist_class if hist_class else default_class
                     
-                    # --- 修正 1.2: 檢查欄位是否存在後才讀取 ---
-                    has_備註1 = '備註1' in h_row.index and h_row['備註1'] is not None and h_row['備註1'] != ''
-                    has_備註2 = '備註2' in h_row.index and h_row['備註2'] is not None and h_row['備註2'] != ''
-                    
-                    備註1_val = h_row['備註1'] if has_備註1 else (h_row.get('備註', '') if '備註' in h_row.index else '')
-                    備註2_val = h_row['備註2'] if has_備註2 else ''
+                    # --- 修正 1.2: 簡化安全讀取邏輯，避免 ambigious ValueError ---
+                    備註1_val = str(h_row.get('備註1', '') or h_row.get('備註', '')).strip()
+                    備註2_val = str(h_row.get('備註2', '')).strip()
 
                     display_rows.append({
                         "勾選": False,
@@ -456,14 +451,14 @@ def create_pdf_report(dept):
             
             render_table_header(pdf)
 
-            for index, row in sem_df.iterrows(): # 使用 index, row 方便 debug
+            for _, row in sem_df.iterrows():
                 
                 # --- 修正 9: 確保所有取出的數據都轉換為 str()，並去除空白，避免 Pandas Series 輸出 ---
                 b1 = str(row.get('教科書(優先1)') or row.get('教科書(1)', '')).strip()
                 v1 = str(row.get('冊次(1)', '')).strip()
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
-                # 備註欄位：確保只從 DF 中取出值，不進行任何硬編碼的欄位名檢查。
+                # 備註欄位：確保只從 DF 中取出值
                 r1 = str(row.get('備註1', '')).strip() 
                 
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
@@ -471,21 +466,12 @@ def create_pdf_report(dept):
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
                 r2 = str(row.get('備註2', '')).strip()
-
-                # --- Debug 模式 (在 PDF 中輸出 r1, r2 的原始值) ---
-                # 如果要 debug，請取消註解以下幾行，並將其放入 data_row_to_write 的適當位置
-                # debug_text = f"r1:{r1}, r2:{r2}"
-                # 課程名稱 = f"{row['課程名稱']}\n{debug_text}" 
                 
                 # 輔助函式：只在兩行內容皆不為空時使用 \n，並避免空行
                 def format_combined_cell(val1, val2):
                     # 確保所有輸入都是非空字串
                     val1 = val1 if val1 else ""
                     val2 = val2 if val2 else ""
-                    
-                    # 徹底檢查 val1, val2 是否為 Pandas/NoneType (應該不會了，但以防萬一)
-                    if isinstance(val1, (pd.Series, pd.DataFrame)) or isinstance(val2, (pd.Series, pd.DataFrame)):
-                         return ""
                     
                     if not val1 and not val2:
                         return ""
