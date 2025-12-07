@@ -400,14 +400,6 @@ def create_pdf_report(dept):
     pdf.add_page()
     
     # --- 欄位與寬度重新定義 (總寬度 259mm) ---
-    # 課程名稱: 30mm
-    # 適用班級: 79mm 
-    # 教科書: 40mm
-    # 冊次: 15mm
-    # 出版社: 25mm
-    # 審定字號: 35mm
-    # 備註 (作者/單價): 35mm
-    
     col_widths = [30, 79, 40, 15, 25, 35, 35] 
     col_names = [
         "課程名稱", "適用班級", 
@@ -452,26 +444,37 @@ def create_pdf_report(dept):
             for _, row in sem_df.iterrows():
                 
                 # --- 修正 5: 確保所有取出的數據都轉換為 str()，避免 Pandas Series 輸出 ---
-                b1 = str(row.get('教科書(優先1)') or row.get('教科書(1)', ''))
-                v1 = str(row.get('冊次(1)', ''))
-                p1 = str(row.get('出版社(1)', ''))
-                c1 = str(row.get('審定字號(1)') or row.get('字號(1)', ''))
-                r1 = str(row.get('備註1', '')) 
+                b1 = str(row.get('教科書(優先1)') or row.get('教科書(1)', '')).strip()
+                v1 = str(row.get('冊次(1)', '')).strip()
+                p1 = str(row.get('出版社(1)', '')).strip()
+                c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
+                r1 = str(row.get('備註1', '')).strip()
                 
-                b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', ''))
-                v2 = str(row.get('冊次(2)', ''))
-                p2 = str(row.get('出版社(2)', ''))
-                c2 = str(row.get('審定字號(2)') or row.get('字號(2)', ''))
-                r2 = str(row.get('備註2', '')) 
+                b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
+                v2 = str(row.get('冊次(2)', '')).strip()
+                p2 = str(row.get('出版社(2)', '')).strip()
+                c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
+                r2 = str(row.get('備註2', '')).strip()
+                
+                # 輔助函式：只在兩行內容皆不為空時使用 \n，避免空行
+                def format_combined_cell(val1, val2):
+                    if not val1 and not val2:
+                        return ""
+                    elif not val2:
+                        return val1
+                    elif not val1:
+                        return val2
+                    else:
+                        return f"{val1}\n{val2}"
                 
                 data_row_to_write = [
                     str(row['課程名稱']),
                     str(row['適用班級']),
-                    f"{b1}\n{b2}", # 教科書 [2]
-                    f"{v1}\n{v2}", # 冊次 [3]
-                    f"{p1}\n{p2}", # 出版社 [4]
-                    f"{c1}\n{c2}", # 審定字號 [5]
-                    f"{r1}\n{r2}" # 備註 (作者/單價) [6]
+                    format_combined_cell(b1, b2), # 教科書 [2]
+                    format_combined_cell(v1, v2), # 冊次 [3]
+                    format_combined_cell(p1, p2), # 出版社 [4]
+                    format_combined_cell(c1, c2), # 審定字號 [5]
+                    format_combined_cell(r1, r2) # 備註 (作者/單價) [6]
                 ]
                 
                 # 1. 計算最大行高 (用於 MultiCell 換行)
@@ -1026,7 +1029,7 @@ def main():
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
                 "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium", disabled=True),
-                "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
+                "冊次(2)": st.column_config.TextColumn("冊次", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
                 # 顯示備註1/2 欄位
