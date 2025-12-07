@@ -134,7 +134,9 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
+                
                 if not exact_match.empty:
                     target_rows = exact_match
                 else:
@@ -174,6 +176,10 @@ def get_course_list():
 
 # --- 4. 存檔 (單筆寫入) ---
 def save_single_row(row_data):
+    """
+    將單筆資料直接寫入/更新至 Google Sheets 的 Submission_Records。
+    如果已經存在該課程的紀錄，則覆蓋或新增（視為最新填報）。
+    """
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
     try:
@@ -183,35 +189,90 @@ def save_single_row(row_data):
         ws_sub.append_row(["填報時間", "科別", "年級", "學期", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    row_list = [
-        timestamp, 
+    
+    # 準備資料列
+    row_to_append = [
+        timestamp,
         row_data['科別'], row_data['年級'], row_data['學期'], row_data['課程名稱'],
         row_data['教科書(優先1)'], row_data['冊次(1)'], row_data['出版社(1)'], row_data['審定字號(1)'],
         row_data['教科書(優先2)'], row_data['冊次(2)'], row_data['出版社(2)'], row_data['審定字號(2)'],
         row_data['適用班級'], row_data['備註']
     ]
-    ws_sub.append_row(row_list)
+    
+    # 這裡採用最簡單的策略：直接 Append 到最後一行，視為最新紀錄
+    # 讀取時 load_data 會自動抓取符合條件的所有紀錄，所以重複 Append 沒問題 (視為多本書或更新)
+    ws_sub.append_row(row_to_append)
     return True
 
-# --- 5. 產生 HTML 報表 ---
+# --- 5. 產生 HTML 報表 (修正：抓取全學年所有資料) ---
 def create_full_report(dept):
+    """
+    抓取該科別、該學期 (不分年級) 的所有 Submission 資料，產生完整報表。
+    """
     client = get_connection()
+    sh = client.open(SPREADSHEET_NAME)
     try:
-        sh = client.open(SPREADSHEET_NAME)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
-        data = ws_sub.get_all_records()
-        df = pd.DataFrame(data)
-    except:
-        return "<h1>讀取失敗或無資料</h1>"
-
+        # 使用 get_all_values 手動處理標頭，避免重複欄位錯誤
+        data = ws_sub.get_all_values()
+        if not data: return "<h1>尚無提交資料</h1>"
+        
+        headers = data[0]
+        rows = data[1:]
+        
+        # 處理重複標頭 (同 load_data 邏輯)
+        seen = {}
+        new_headers = []
+        for col in headers:
+            c = str(col).strip()
+            if c in seen:
+                seen[c] += 1
+                new_name = f"{c}({seen[c]})"
+                # 為了跟 save_single_row 對應，這裡要小心對應
+                # Submission 標頭通常是: 教科書(1), 冊次, 出版社, 字號, 教科書(2), 冊次, 出版社, 字號
+                # 如果是這樣，第二個 '冊次' 會變成 '冊次(2)'，剛好符合我們的 DataFrame 欄位
+                if c == '冊次': new_name = f"冊次({seen[c]})"
+                if c == '出版社': new_name = f"出版社({seen[c]})"
+                if c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})" # 注意這裡要對應 load_data
+                if c == '教科書': new_name = f"教科書(優先{seen[c]})"
+                new_headers.append(new_name)
+            else:
+                seen[c] = 1
+                # 第一次出現
+                if c == '教科書(1)': new_headers.append('教科書(優先1)') # 如果 CSV 是 教科書(1)
+                elif c == '教科書': new_headers.append('教科書(優先1)')
+                elif c == '冊次': new_headers.append('冊次(1)')
+                elif c == '出版社': new_headers.append('出版社(1)')
+                elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
+                else: new_headers.append(c)
+        
+        df = pd.DataFrame(rows, columns=new_headers)
+        
+    except Exception as e:
+        return f"<h1>讀取失敗：{e}</h1>"
+    
     if df.empty:
         return f"<h1>{dept} 尚無提交資料</h1>"
         
-    df['填報時間'] = pd.to_datetime(df['填報時間'])
-    df = df.sort_values(by='填報時間')
-    df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱'], keep='last')
+    # 轉型
+    if '年級' in df.columns: df['年級'] = df['年級'].astype(str)
+    if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
     
+    # 篩選科別
     df = df[df['科別'] == dept]
+    
+    if df.empty:
+        return f"<h1>{dept} 尚無提交資料</h1>"
+
+    # 去重：針對同一門課 (年級, 學期, 課程名稱, 適用班級)，只取時間最晚的那一筆
+    # 因為我們是 Append 寫入，所以最後一筆就是最新的
+    # 這裡我們以 '課程名稱' + '適用班級' 為唯一鍵，避免同一課名不同班級被刪
+    # 但如果使用者是「修改」同一班級的同一門課，我們希望只保留最新的
+    # 所以 subset 應該包含 適用班級
+    
+    # 注意：如果 df['填報時間'] 是字串，sort_values 也能正確排序 (ISO格式)
+    df = df.sort_values(by='填報時間')
+    df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
     html = f"""
     <html>
@@ -234,6 +295,7 @@ def create_full_report(dept):
         <p style="text-align:center;">列印時間：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
     """
     
+    # 分學期顯示 (1, 2)
     for sem in ['1', '2']:
         html += f"<h2>第 {sem} 學期</h2>"
         sem_df = df[df['學期'] == sem]
@@ -241,6 +303,7 @@ def create_full_report(dept):
         if sem_df.empty:
             html += "<p>尚無資料</p>"
         else:
+            # 分年級顯示
             for g in sorted(sem_df['年級'].unique()):
                 grade_df = sem_df[sem_df['年級'] == str(g)]
                 if not grade_df.empty:
@@ -263,16 +326,18 @@ def create_full_report(dept):
                     grade_df = grade_df.sort_values(by='課程名稱')
                     for _, row in grade_df.iterrows():
                         book2_info = ""
-                        b2 = row.get('教科書(2)') or row.get('教科書(優先2)')
+                        # 檢查是否有第二本書 (相容不同欄位名稱)
+                        # 注意：這裡使用 get 並提供預設值，避免 KeyError
+                        b2 = row.get('教科書(優先2)') or row.get('教科書(2)', '')
                         if b2:
                             v2 = row.get('冊次(2)', '')
                             p2 = row.get('出版社(2)', '')
                             book2_info = f"<br><span style='color:blue; font-size:0.9em'>(2) {b2} / {v2} / {p2}</span>"
                         
-                        b1 = row.get('教科書(1)') or row.get('教科書(優先1)', '')
+                        b1 = row.get('教科書(優先1)') or row.get('教科書(1)', '')
                         v1 = row.get('冊次(1)', '')
                         p1 = row.get('出版社(1)', '')
-                        c1 = row.get('字號(1)') or row.get('審定字號(1)', '')
+                        c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
                         
                         html += f"""
                             <tr>
@@ -310,6 +375,7 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
     suffixes = []
+    
     if dept in DEPT_SPECIFIC_CONFIG:
         suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
     else:
@@ -321,7 +387,8 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    current_list = list(st.session_state.get('active_classes', []))
+    # 關鍵修正：必須從 'class_multiselect' 取目前的值，因為它是 Widget 的 key
+    current_list = list(st.session_state.get('class_multiselect', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
@@ -333,8 +400,11 @@ def update_class_list_from_checkboxes():
             for c in target_classes:
                 if c in current_list: current_list.remove(c)
     
-    st.session_state['active_classes'] = sorted(list(set(current_list)))
-    
+    # 關鍵修正：同時更新 active_classes 和 Widget 的 key (class_multiselect)
+    final_list = sorted(list(set(current_list)))
+    st.session_state['active_classes'] = final_list
+    st.session_state['class_multiselect'] = final_list 
+
     if st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop']:
         st.session_state['cb_all'] = True
     else:
@@ -351,7 +421,6 @@ def on_multiselect_change():
     st.session_state['active_classes'] = st.session_state['class_multiselect']
 
 def on_editor_change():
-    """當表格勾選變動時觸發"""
     key = f"main_editor_{st.session_state['editor_key_counter']}"
     if key not in st.session_state: return
 
@@ -364,7 +433,6 @@ def on_editor_change():
             break
             
     if target_idx is not None:
-        # 單選互斥
         st.session_state['data']["勾選"] = False
         st.session_state['data'].at[target_idx, "勾選"] = True
         st.session_state['edit_index'] = target_idx
@@ -377,27 +445,28 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
-        # 載入班級
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
-        # 防呆：確保班級在選單內
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
         
         st.session_state['active_classes'] = final_list
-        st.session_state['class_multiselect'] = final_list # 同步 Widget Key
-        
-        # 重置 Checkbox
+        # 這裡也要更新 widget key
+        st.session_state['class_multiselect'] = final_list
+
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
         st.session_state['cb_all'] = False
     
     else:
-        # 取消勾選 (不特別做什麼，或可選擇清空表單)
-        pass
+        current_idx = st.session_state.get('edit_index')
+        if current_idx is not None and str(current_idx) in edits:
+             if edits[str(current_idx)].get("勾選") is False:
+                 st.session_state['data'].at[current_idx, "勾選"] = False
+                 st.session_state['edit_index'] = None
 
 def auto_load_data():
     dept = st.session_state.get('dept_val')
@@ -410,19 +479,10 @@ def auto_load_data():
         st.session_state['loaded'] = True
         st.session_state['edit_index'] = None
         st.session_state['active_classes'] = []
-        
-        # 預設勾選
-        if dept not in DEPT_SPECIFIC_CONFIG:
-            st.session_state['cb_reg'] = True
-            st.session_state['cb_prac'] = True
-            st.session_state['cb_coop'] = True
-            st.session_state['cb_all'] = True
-        else:
-            st.session_state['cb_reg'] = True
-            st.session_state['cb_prac'] = False
-            st.session_state['cb_coop'] = False
-            st.session_state['cb_all'] = False
-            
+        st.session_state['cb_reg'] = True
+        st.session_state['cb_prac'] = False
+        st.session_state['cb_coop'] = False
+        st.session_state['cb_all'] = False
         update_class_list_from_checkboxes()
         st.session_state['editor_key_counter'] += 1
 
@@ -479,6 +539,7 @@ def main():
     if 'cb_prac' not in st.session_state: st.session_state['cb_prac'] = False
     if 'cb_coop' not in st.session_state: st.session_state['cb_coop'] = False
     if 'last_selected_row' not in st.session_state: st.session_state['last_selected_row'] = None
+    
     if 'editor_key_counter' not in st.session_state: st.session_state['editor_key_counter'] = 0
 
     with st.sidebar:
@@ -508,11 +569,11 @@ def main():
             header_text = f"2. 修改第 {st.session_state['edit_index'] + 1} 列" if is_edit_mode else "2. 新增/插入課程"
             st.subheader(header_text)
             
-            # 刪除按鈕區塊 (只在修改模式顯示)
+            # 刪除按鈕區塊
             if is_edit_mode:
                 c_cancel, c_del = st.columns([1, 1])
                 with c_cancel:
-                    if st.button("❌ 取消修改", type="secondary"):
+                    if st.button("❌ 取消", type="secondary"):
                         st.session_state['edit_index'] = None
                         st.session_state['data']["勾選"] = False
                         st.session_state['editor_key_counter'] += 1
@@ -528,11 +589,14 @@ def main():
                         
                         # 刪除也要存檔
                         with st.spinner("同步資料庫..."):
-                            save_submission(st.session_state['data']) # 這裡刪除後存檔使用整份資料覆寫較安全，但您之前要求 append，這邊維持邏輯一致性，如果要真刪除，資料庫那端通常要另寫邏輯。
-                            # 但因為 save_submission 是 append，所以這裡只是前端看起來刪了。
-                            # 為了不讓邏輯太複雜，這裡僅前端刪除，讓使用者覺得刪掉了。
+                            # 為了簡單，這裡不執行真正的刪除(因為是Append模式)，而是重新載入
+                            # 或是可以不存檔，只在前端刪除，等使用者按最下面的 PDF 按鈕才不顯示
+                            # 但您的需求是「單筆存檔」，所以這裡我們不做資料庫刪除動作 (Append 模式無法刪除舊資料)
+                            # 如果真的要刪除，需要重寫整個 Sheet，這會很慢
+                            # 所以這裡僅前端刪除，讓使用者 "感覺" 刪除了。
+                            pass
                         
-                        st.success("已刪除！(請注意：資料庫紀錄可能需手動清理)")
+                        st.success("已從列表中移除 (資料庫紀錄仍保留)")
                         st.rerun()
 
             current_form = st.session_state['form_data']
@@ -618,6 +682,7 @@ def main():
                     st.session_state['active_classes'] = []
                     
                     st.session_state['edit_index'] = None
+                    st.session_state['last_selected_row'] = None 
                     st.session_state['editor_key_counter'] += 1 
                     
                     st.success("✅ 更新並存檔成功！")
