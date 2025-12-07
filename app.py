@@ -111,6 +111,7 @@ def load_data(dept, semester, grade):
         
         sub_matches = pd.DataFrame()
         if not df_sub.empty:
+             # 注意：這裡比對的是 Submission 的 年級/學期
              mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
              sub_matches = df_sub[mask_sub]
 
@@ -182,6 +183,7 @@ def save_single_row(row_data, original_key=None):
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
+        # 標題列順序：uuid, 填報時間, 科別, 學期, 年級 ...
         ws_sub.append_row(["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     all_values = ws_sub.get_all_values()
@@ -192,6 +194,7 @@ def save_single_row(row_data, original_key=None):
     
     headers = all_values[0]
     
+    # 防呆：確保 uuid 欄位存在
     if "uuid" not in headers:
         ws_sub.clear() 
         headers = ["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"]
@@ -205,7 +208,11 @@ def save_single_row(row_data, original_key=None):
     data_dict = {
         "uuid": target_uuid,
         "填報時間": timestamp,
-        "科別": row_data['科別'], "學期": row_data['學期'], "年級": row_data['年級'], "課程名稱": row_data['課程名稱'],
+        # 修正存檔順序：這裡指定字典 key，寫入時會對應 headers
+        "科別": row_data['科別'], 
+        "學期": row_data['學期'], 
+        "年級": row_data['年級'], 
+        "課程名稱": row_data['課程名稱'],
         "教科書(1)": row_data['教科書(優先1)'], "冊次(1)": row_data['冊次(1)'], "出版社(1)": row_data['出版社(1)'], "字號(1)": row_data['審定字號(1)'],
         "教科書(2)": row_data['教科書(優先2)'], "冊次(2)": row_data['冊次(2)'], "出版社(2)": row_data['出版社(2)'], "字號(2)": row_data['審定字號(2)'],
         "適用班級": row_data['適用班級'], "備註": row_data['備註']
@@ -313,19 +320,19 @@ def create_full_report(dept):
     if df.empty:
         return f"<h1>{dept} 尚無提交資料</h1>"
         
+    # 確保是字串，避免排序錯誤
     if '年級' in df.columns: df['年級'] = df['年級'].astype(str)
     if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
     
     df = df[df['科別'] == dept]
     if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
+    # 這裡的去重包含適用班級
     df = df.sort_values(by='填報時間')
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
-    # 判斷是否為專業科系，決定簽核欄位
     is_vocational = dept in DEPT_SPECIFIC_CONFIG
     
-    # 動態產生簽核欄位 HTML
     signature_section = """
         <div class="footer">
             <span style="display:inline-block; width:200px;">填表人簽章：________________</span>
@@ -353,6 +360,7 @@ def create_full_report(dept):
             th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; vertical-align: middle; }}
             th {{ background-color: #f2f2f2; }}
             .book-row {{ margin-bottom: 4px; }}
+            .book-cell {{ padding: 2px; }}
             .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; padding-top: 2px; margin-top: 2px; display: block; }}
             .footer {{ margin-top: 50px; text-align: center; }}
             .footer span {{ margin: 10px; text-align: left; }}
@@ -391,26 +399,37 @@ def create_full_report(dept):
                     """
                     grade_df = grade_df.sort_values(by='課程名稱')
                     for _, row in grade_df.iterrows():
-                        book2_info = ""
+                        # Helper for cell content
+                        def mk_cell(v1, v2):
+                            v1_s = str(v1) if v1 else ""
+                            if not v2: return f"<div class='book-cell'>{v1_s}</div>"
+                            v2_s = str(v2) if v2 else ""
+                            return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
+
                         b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
-                        if b2:
-                            v2 = row.get('冊次(2)', '')
-                            p2 = row.get('出版社(2)', '')
-                            book2_info = f"<br><span style='color:blue; font-size:0.9em'>(2) {b2} / {v2} / {p2}</span>"
+                        v2 = row.get('冊次(2)', '')
+                        p2 = row.get('出版社(2)', '')
+                        c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
                         
                         b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
                         v1 = row.get('冊次(1)', '')
                         p1 = row.get('出版社(1)', '')
                         c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
                         
+                        # 處理上下兩列顯示
+                        book_cell = mk_cell(b1, b2)
+                        vol_cell = mk_cell(v1, v2)
+                        pub_cell = mk_cell(p1, p2)
+                        code_cell = mk_cell(c1, c2)
+                        
                         html += f"""
                             <tr>
                                 <td>{row['課程名稱']}</td>
                                 <td>{row['適用班級']}</td>
-                                <td>{b1}{book2_info}</td>
-                                <td>{v1}</td>
-                                <td>{p1}</td>
-                                <td>{c1}</td>
+                                <td>{book_cell}</td>
+                                <td>{vol_cell}</td>
+                                <td>{pub_cell}</td>
+                                <td>{code_cell}</td>
                                 <td>{row.get('備註', '')}</td>
                             </tr>
                         """
@@ -515,7 +534,6 @@ def on_editor_change():
         
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
-        
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
