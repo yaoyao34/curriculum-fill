@@ -136,8 +136,13 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
-                target_rows = exact_match if not exact_match.empty else hist_matches
+                
+                if not exact_match.empty:
+                    target_rows = exact_match
+                else:
+                    target_rows = hist_matches
 
                 for _, h_row in target_rows.iterrows():
                     hist_class = h_row.get('適用班級', '')
@@ -173,7 +178,7 @@ def get_course_list():
         return st.session_state['data']['課程名稱'].unique().tolist()
     return []
 
-# --- 4. 存檔 (UUID 核心邏輯 - 修復版) ---
+# --- 4. 存檔 (單筆寫入) ---
 def save_single_row(row_data, original_key=None):
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
@@ -421,9 +426,12 @@ def get_target_classes_for_dept(dept, grade, sys_name):
     if not prefix: return []
     suffixes = []
     
-    # 修改：不檢查 DEPT_SPECIFIC_CONFIG，總是回傳全校該學制班級
-    # 這樣在勾選「普通科」時，不管你是機械科還是建築科，都會列出「一機甲、一建築」等所有普通班
-    suffixes = ALL_SUFFIXES.get(sys_name, [])
+    # 修改：如果是專業科系，只抓該科；否則抓全校該學制
+    if dept in DEPT_SPECIFIC_CONFIG:
+        suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
+    else:
+        # 共同科目 (或未定義科別)，預設抓全校該學制
+        suffixes = ALL_SUFFIXES.get(sys_name, [])
         
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
@@ -432,18 +440,22 @@ def get_target_classes_for_dept(dept, grade, sys_name):
 def update_class_list_from_checkboxes():
     dept = st.session_state.get('dept_val')
     grade = st.session_state.get('grade_val')
-    # 關鍵修正：必須從 'class_multiselect' 取目前的值，因為它是 Widget 的 key
-    current_list = list(st.session_state.get('class_multiselect', []))
+    current_list = list(st.session_state.get('active_classes', []))
     
     for sys_key, sys_name in [('cb_reg', '普通科'), ('cb_prac', '實用技能班'), ('cb_coop', '建教班')]:
         is_checked = st.session_state[sys_key]
         target_classes = get_target_classes_for_dept(dept, grade, sys_name)
+        
         if is_checked:
+            # 加入：把這些班級加進 current_list (如果不重複)
             for c in target_classes:
-                if c not in current_list: current_list.append(c)
+                if c not in current_list:
+                    current_list.append(c)
         else:
+            # 移除：把這些班級移出
             for c in target_classes:
-                if c in current_list: current_list.remove(c)
+                if c in current_list:
+                    current_list.remove(c)
     
     # 關鍵修正：同時更新 active_classes 和 Widget 的 key (class_multiselect)
     final_list = sorted(list(set(current_list)))
@@ -466,6 +478,7 @@ def on_multiselect_change():
     st.session_state['active_classes'] = st.session_state['class_multiselect']
 
 def on_editor_change():
+    """當表格勾選變動時觸發"""
     key = f"main_editor_{st.session_state['editor_key_counter']}"
     if key not in st.session_state: return
 
@@ -484,6 +497,7 @@ def on_editor_change():
         
         row_data = st.session_state['data'].iloc[target_idx]
         
+        # 記錄原始 key (包含 UUID)
         st.session_state['original_key'] = {
             '科別': row_data['科別'],
             '年級': str(row_data['年級']),
@@ -500,32 +514,22 @@ def on_editor_change():
             'note': row_data.get("備註", "")
         }
         
+        # 關鍵修正：將班級字串解析並正確填入 active_classes
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
         
         grade = st.session_state.get('grade_val')
-        dept = st.session_state.get('dept_val')
-        valid_classes = get_all_possible_classes(grade) if grade else []
-        final_list = [c for c in class_list if c in valid_classes]
+        # 這裡不進行過濾，直接填入，因為這是資料庫裡的既有資料
+        # 但為了確保 multiselect 不報錯，我們需要在顯示時把這些班級加到 options 裡
         
-        st.session_state['active_classes'] = final_list
-        st.session_state['class_multiselect'] = final_list
+        st.session_state['active_classes'] = class_list
+        st.session_state['class_multiselect'] = class_list
 
-        # 反推 Checkbox 狀態
+        # 重置 Checkbox
         st.session_state['cb_reg'] = False
         st.session_state['cb_prac'] = False
         st.session_state['cb_coop'] = False
-        
-        reg_targets = get_target_classes_for_dept(dept, grade, "普通科")
-        prac_targets = get_target_classes_for_dept(dept, grade, "實用技能班")
-        coop_targets = get_target_classes_for_dept(dept, grade, "建教班")
-        
-        # 只要有交集就勾選
-        if set(final_list) & set(reg_targets): st.session_state['cb_reg'] = True
-        if set(final_list) & set(prac_targets): st.session_state['cb_prac'] = True
-        if set(final_list) & set(coop_targets): st.session_state['cb_coop'] = True
-        
-        st.session_state['cb_all'] = (st.session_state['cb_reg'] and st.session_state['cb_prac'] and st.session_state['cb_coop'])
+        st.session_state['cb_all'] = False
     
     else:
         current_idx = st.session_state.get('edit_index')
@@ -550,6 +554,7 @@ def auto_load_data():
         st.session_state['current_uuid'] = None
         st.session_state['active_classes'] = []
         
+        # 預設勾選
         if dept not in DEPT_SPECIFIC_CONFIG:
             st.session_state['cb_reg'] = True
             st.session_state['cb_prac'] = True
@@ -718,12 +723,12 @@ def main():
             st.caption("👇 點選加入其他班級")
             all_possible = get_all_possible_classes(grade)
             
-            valid_active = [c for c in st.session_state['active_classes'] if c in all_possible]
-            st.session_state['active_classes'] = valid_active
+            # 關鍵修正：確保 default 值在 options 裡
+            final_options = sorted(list(set(all_possible + st.session_state['active_classes'])))
             
             selected_classes = st.multiselect(
                 "最終班級列表:",
-                options=all_possible,
+                options=final_options,
                 default=st.session_state['active_classes'],
                 key="class_multiselect",
                 on_change=on_multiselect_change
