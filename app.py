@@ -63,28 +63,39 @@ def get_connection():
 def safe_note(row, *keys):
     """
     從 row 中依序嘗試多個 key 取值，
-    並安全處理 Series / None / 多餘「備註X」字首
+    並安全處理：
+    - Series（只取第一個）
+    - None / 空值
+    - 開頭多餘的「備註1 / 備註2」
     """
     val = ""
 
     for k in keys:
-        if k in row and row[k] not in [None, ""]:
-            val = row[k]
-            break
+        if k in row:
+            candidate = row[k]
 
-    # ✅ 如果是 Pandas Series → 只取第一格
-    if isinstance(val, pd.Series):
-        val = val.iloc[0]
+            # ✅ 如果是 Series，只取第一格
+            if isinstance(candidate, pd.Series):
+                if not candidate.empty:
+                    candidate = candidate.iloc[0]
+                else:
+                    candidate = ""
+
+            # ✅ 再來才檢查是否為空
+            if candidate not in [None, ""]:
+                val = candidate
+                break
 
     val = str(val).strip()
 
-    # ✅ 只移除「開頭」的 備註1 / 備註2，不動中間
+    # ✅ 只移除「開頭」的 備註1 / 備註2
     if val.startswith("備註1"):
         val = val[len("備註1"):].strip()
     elif val.startswith("備註2"):
         val = val[len("備註2"):].strip()
 
     return val
+
 
 
 # --- 2. 資料讀取 ---
@@ -1140,6 +1151,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
