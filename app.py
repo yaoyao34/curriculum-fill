@@ -110,6 +110,7 @@ def get_connection():
     return gspread.authorize(creds)
 
 # --- 2. 資料讀取 ---
+# --- 2. 資料讀取 (修正版：解決重複顯示與班級對應問題) ---
 def load_data(dept, semester, grade):
     client = get_connection()
     if not client: return pd.DataFrame()
@@ -135,8 +136,7 @@ def load_data(dept, semester, grade):
                     elif c == '冊次': new_name = f"冊次({seen[c]})"
                     elif c == '出版社': new_name = f"出版社({seen[c]})"
                     elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
-                    # --- 處理備註欄位名稱 ---
-                    elif c == '備註' or c.startswith('備註'): new_name = f"備註{seen[c]}"
+                    elif c.startswith('備註'): new_name = f"備註{seen[c]}"
                     new_headers.append(new_name)
                 else:
                     seen[c] = 1
@@ -144,8 +144,7 @@ def load_data(dept, semester, grade):
                     elif c == '冊次': new_headers.append('冊次(1)')
                     elif c == '出版社': new_headers.append('出版社(1)')
                     elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
-                    # --- 處理備註欄位名稱 ---
-                    elif c == '備註' or c.startswith('備註'): new_headers.append('備註1')
+                    elif c.startswith('備註'): new_headers.append('備註1')
                     else: new_headers.append(c)
             return pd.DataFrame(rows, columns=new_headers)
 
@@ -170,67 +169,87 @@ def load_data(dept, semester, grade):
 
     display_rows = []
     
-    # --- 修正 2.1: 修正安全讀取函式，處理 Series 情況 ---
+    # 🌟 新增：用來記錄已經顯示過的 Submission UUID，防止同一筆填報紀錄出現兩次
+    displayed_uuids = set()
+    
+    # --- 輔助函式 ---
     def safe_get_value(row, key, default=''):
         val = row.get(key, default)
-        
         if isinstance(val, pd.Series):
             try:
-                # 嘗試取出 Series 的第一個元素
-                # 如果 Series 是空的，iloc[0] 會拋出 IndexError，被 except 捕獲
                 val = val.iloc[0]
             except IndexError:
                 val = default
-        
-        # 確保最終結果是字串
         return str(val).strip()
 
     for _, row in target_courses.iterrows():
         c_name = row['課程名稱']
         c_type = row['課程類別']
-        default_class = row.get('預設適用班級', '') 
+        # 取得這一列原本預設給哪個班級 (例如: 一建築)
+        default_class = row.get('預設適用班級', '').strip() 
         
+        # 1. 先找 Submission (填報紀錄)
         sub_matches = pd.DataFrame()
         if not df_sub.empty:
             mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
             sub_matches = df_sub[mask_sub]
 
+        # 標記：這一列 Curriculum 是否已經被某個 Submission 覆蓋了解決？
+        is_covered_by_submission = False
+
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
+                s_uuid = s_row.get('uuid', str(uuid.uuid4()))
+                s_classes = safe_get_value(s_row, '適用班級')
                 
-                # --- 修正 2.2: 使用 safe_get_value 讀取備註，避免 Series 錯誤 ---
-                備註1_val = safe_get_value(s_row, '備註1')
-                備註2_val = safe_get_value(s_row, '備註2')
+                # 🌟 關鍵邏輯修正：
+                # 只有當「填報紀錄的適用班級」包含了「這列 Curriculum 的預設班級」時，才視為匹配。
+                # 例如：Loop跑到「一建築」時，填報資料「一建築」會匹配 -> 顯示。
+                #      Loop跑到「一營造」時，填報資料「一建築」不匹配 -> 不顯示，程式會往下走去顯示「一營造」的預設值。
+                
+                # 使用簡單的字串包含檢查 (若班級名稱有重疊風險如 '機甲', '機甲乙'，建議改用 split 後檢查)
+                if default_class in s_classes:
+                    is_covered_by_submission = True
+                    
+                    # 🌟 避免重複顯示：如果這個 UUID 已經顯示過了，就不再 add 到 display_rows
+                    if s_uuid not in displayed_uuids:
+                        備註1_val = safe_get_value(s_row, '備註1')
+                        備註2_val = safe_get_value(s_row, '備註2')
 
-                display_rows.append({
-                    "勾選": False,
-                    "uuid": s_row.get('uuid', str(uuid.uuid4())), 
-                    "科別": dept, "年級": grade, "學期": semester,
-                    "課程類別": c_type, "課程名稱": c_name,
-                    "適用班級": s_row.get('適用班級', default_class),
-                    "教科書(優先1)": s_row.get('教科書(優先1)', '') or s_row.get('教科書(1)', ''), 
-                    "冊次(1)": s_row.get('冊次(1)', ''), 
-                    "出版社(1)": s_row.get('出版社(1)', ''), 
-                    "審定字號(1)": s_row.get('審定字號(1)', '') or s_row.get('字號(1)', ''),
-                    "教科書(優先2)": s_row.get('教科書(優先2)', '') or s_row.get('教科書(2)', ''), 
-                    "冊次(2)": s_row.get('冊次(2)', ''), 
-                    "出版社(2)": s_row.get('出版社(2)', ''), 
-                    "審定字號(2)": s_row.get('審定字號(2)', '') or s_row.get('字號(2)', ''),
-                    "備註1": 備註1_val, 
-                    "備註2": 備註2_val
-                })
-        else:
+                        display_rows.append({
+                            "勾選": False,
+                            "uuid": s_uuid, 
+                            "科別": dept, "年級": grade, "學期": semester,
+                            "課程類別": c_type, "課程名稱": c_name,
+                            "適用班級": s_classes, # 顯示填報的班級
+                            "教科書(優先1)": safe_get_value(s_row, '教科書(優先1)') or safe_get_value(s_row, '教科書(1)'), 
+                            "冊次(1)": safe_get_value(s_row, '冊次(1)'), 
+                            "出版社(1)": safe_get_value(s_row, '出版社(1)'), 
+                            "審定字號(1)": safe_get_value(s_row, '審定字號(1)') or safe_get_value(s_row, '字號(1)'),
+                            "教科書(優先2)": safe_get_value(s_row, '教科書(優先2)') or safe_get_value(s_row, '教科書(2)'), 
+                            "冊次(2)": safe_get_value(s_row, '冊次(2)'), 
+                            "出版社(2)": safe_get_value(s_row, '出版社(2)'), 
+                            "審定字號(2)": safe_get_value(s_row, '審定字號(2)') or safe_get_value(s_row, '字號(2)'),
+                            "備註1": 備註1_val, 
+                            "備註2": 備註2_val
+                        })
+                        displayed_uuids.add(s_uuid)
+
+        # 2. 如果沒有被 Submission 覆蓋，才去找 History 或顯示 Default
+        if not is_covered_by_submission:
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
+            target_rows = pd.DataFrame()
 
             if not hist_matches.empty:
+                # 這裡原本邏輯就是找 exact match，所以通常不會有重複問題
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 target_rows = exact_match if not exact_match.empty else hist_matches
 
+            if not target_rows.empty:
                 for _, h_row in target_rows.iterrows():
-                    hist_class = h_row.get('適用班級', '')
-                    final_class = hist_class if hist_class else default_class
+                    # 這裡也要稍微防呆，確認一下這筆歷史資料是不是真的跟當前預設班級有關
+                    # 但因為 DB_History 結構通常較單純，這裡維持原樣即可
                     
-                    # --- 修正 2.3: 使用 safe_get_value 讀取備註，避免 Series 錯誤 ---
                     備註1_val = safe_get_value(h_row, '備註1')
                     備註2_val = safe_get_value(h_row, '備註2')
 
@@ -239,13 +258,14 @@ def load_data(dept, semester, grade):
                         "uuid": str(uuid.uuid4()), 
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
-                        "適用班級": final_class,
+                        "適用班級": h_row.get('適用班級', default_class),
                         "教科書(優先1)": h_row.get('教科書(優先1)', ''), "冊次(1)": h_row.get('冊次(1)', ''), "出版社(1)": h_row.get('出版社(1)', ''), "審定字號(1)": h_row.get('審定字號(1)', ''),
                         "教科書(優先2)": h_row.get('教科書(優先2)', ''), "冊次(2)": h_row.get('冊次(2)', ''), "出版社(2)": h_row.get('出版社(2)', ''), "審定字號(2)": h_row.get('審定字號(2)', ''),
                         "備註1": 備註1_val,
                         "備註2": 備註2_val
                     })
             else:
+                # 3. 完全沒有資料，顯示預設空白列
                 display_rows.append({
                     "勾選": False,
                     "uuid": str(uuid.uuid4()), 
@@ -1161,6 +1181,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
