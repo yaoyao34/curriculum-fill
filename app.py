@@ -420,6 +420,7 @@ def delete_row_from_db(target_uuid):
 
 # --- 5. 產生 PDF 報表 ---
 # --- 5. 產生 PDF 報表 (修正版：直向 A4 + 自動縮放欄寬) ---
+# --- 5. 產生 PDF 報表 (修正版：直向 A4 + 自動縮放欄寬) ---
 def create_pdf_report(dept):
     """
     從 Google Sheet 抓取該科別所有資料 (Submission_Records)，並使用 FPDF 生成 PDF 報表。
@@ -435,7 +436,7 @@ def create_pdf_report(dept):
             # 使用已註冊的字體
             self.set_font(CHINESE_FONT, 'B', 16) 
             self.cell(0, 10, f'{dept} 114學年度 教科書選用總表', 0, 1, 'C')
-            self.set_font(CHINESE_FONT, '', 8)
+            self.set_font(CHINESE_FONT, '', 10)
             self.cell(0, 5, f"列印時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", 0, 1, 'R')
             self.ln(5)
 
@@ -501,7 +502,7 @@ def create_pdf_report(dept):
     # --- 2. PDF 生成 ---
     # 🌟 修改 1: orientation='P' (Portrait 直向)
     pdf = PDF(orientation='P', unit='mm', format='A4') 
-    pdf.set_auto_page_break(auto=True, margin=10)
+    pdf.set_auto_page_break(auto=True, margin=15)
     
     try:
         pdf.add_font(CHINESE_FONT, '', 'NotoSansCJKtc-Regular.ttf', uni=True) 
@@ -515,7 +516,7 @@ def create_pdf_report(dept):
     
     # --- 🌟 修改 2: 欄位寬度調整 (總寬度約 190mm 以符合 A4 直向) ---
     # 比例重新分配以適應直向頁面
-    col_widths = [21, 65, 28, 10, 17, 24, 25] 
+    col_widths = [21, 55, 28, 10, 17, 24, 35] 
     # [課程, 班級, 書名, 冊, 出版, 字號, 備註]
     
     col_names = [
@@ -528,7 +529,7 @@ def create_pdf_report(dept):
     
     def render_table_header(pdf):
         """繪製表格標頭，支援 MultiCell 換行"""
-        pdf.set_font(CHINESE_FONT, 'B', 10) 
+        pdf.set_font(CHINESE_FONT, 'B', 9) 
         pdf.set_fill_color(220, 220, 220)
         start_x = pdf.get_x()
         start_y = pdf.get_y()
@@ -538,16 +539,16 @@ def create_pdf_report(dept):
             pdf.multi_cell(w, 7, name, 1, 'C', 1) 
             start_x += w
         pdf.set_xy(pdf.l_margin, start_y + 7) # 移至下一行
-        pdf.set_font(CHINESE_FONT, '', 9) # 切回內文文字
+        pdf.set_font(CHINESE_FONT, '', 8) # 切回內文文字
         
     # 依學期和年級分組繪製表格
-    pdf.set_font(CHINESE_FONT, '', 9)
+    pdf.set_font(CHINESE_FONT, '', 8)
     
     for sem in sorted(df['學期'].unique()):
         sem_df = df[df['學期'] == sem].copy()
         
         # 學期標頭
-        pdf.set_font(CHINESE_FONT, 'B', 10)
+        pdf.set_font(CHINESE_FONT, 'B', 12)
         pdf.set_fill_color(200, 220, 255)
         pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
         
@@ -596,7 +597,7 @@ def create_pdf_report(dept):
                 ]
                 
                 # 1. 計算最大行高 (用於 MultiCell 換行)
-                pdf.set_font(CHINESE_FONT, '', 9)
+                pdf.set_font(CHINESE_FONT, '', 8)
                 
                 base_height = 9.0 
                 
@@ -613,7 +614,7 @@ def create_pdf_report(dept):
                 # 2. 檢查是否需要換頁
                 if pdf.get_y() + row_height > pdf.page_break_trigger:
                     pdf.add_page()
-                    pdf.set_font(CHINESE_FONT, 'B', 9)
+                    pdf.set_font(CHINESE_FONT, 'B', 12)
                     pdf.set_fill_color(200, 220, 255)
                     pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
                     render_table_header(pdf)
@@ -627,7 +628,7 @@ def create_pdf_report(dept):
                     pdf.set_xy(start_x, start_y)
                     pdf.cell(w, row_height, "", 1, 0, 'L')
                     
-                    pdf.set_font(CHINESE_FONT, '', 9)
+                    pdf.set_font(CHINESE_FONT, '', 8)
                     
                     if i in [2, 3, 4, 5, 6]: # 雙行合併欄位
                         y_offset = (row_height - base_height) / 2 + 0.5
@@ -1184,6 +1185,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
