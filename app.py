@@ -380,21 +380,23 @@ def create_pdf_report(dept):
         
     pdf.add_page()
     
-    # --- 修正 1: 定義新的合併欄位與寬度 (總寬度 259mm) ---
+    # --- 修正 1 & 2: 定義新的合併欄位與寬度 (總寬度 259mm) ---
     # 課程名稱: 30mm
-    # 適用班級: 35mm (調整為較寬)
+    # 適用班級: 79mm (新寬度，為前備註寬度)
     # 教科書: 40mm
     # 冊次: 15mm
     # 出版社: 25mm
     # 審定字號: 35mm
-    # 備註: 79mm (調整為最寬)
+    # 備註: 35mm (新寬度，為前適用班級寬度)
     
-    col_widths = [30, 35, 40, 15, 25, 35, 79] 
+    col_widths = [30, 79, 40, 15, 25, 35, 35] 
     col_names = [
         "課程名稱", "適用班級", 
         "教科書", "冊次", "出版社", "審定字號",
         "備註"
     ]
+    
+    TOTAL_TABLE_WIDTH = sum(col_widths)
     
     def render_table_header(pdf):
         """繪製表格標頭，支援 MultiCell 換行"""
@@ -419,7 +421,8 @@ def create_pdf_report(dept):
         # 學期標頭
         pdf.set_font(CHINESE_FONT, 'B', 12)
         pdf.set_fill_color(200, 220, 255)
-        pdf.cell(0, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
+        # FIX: 限制標題寬度為表格總寬度 (259mm)
+        pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
         
         # 依 年級 -> 課程名稱 排序
         if not sem_df.empty:
@@ -443,23 +446,22 @@ def create_pdf_report(dept):
                 data_row_to_write = [
                     row['課程名稱'],
                     row['適用班級'],
-                    f"{b1}\n{b2}", # 教科書
-                    f"{v1}\n{v2}", # 冊次
-                    f"{p1}\n{p2}", # 出版社
-                    f"{c1}\n{c2}", # 審定字號
-                    row.get('備註', '')
+                    f"{b1}\n{b2}", # 教科書 [2]
+                    f"{v1}\n{v2}", # 冊次 [3]
+                    f"{p1}\n{p2}", # 出版社 [4]
+                    f"{c1}\n{c2}", # 審定字號 [5]
+                    row.get('備註', '') # 備註 [6]
                 ]
                 
                 # 1. 計算最大行高 (用於 MultiCell 換行)
                 pdf.set_font(CHINESE_FONT, '', 8)
                 
-                # 基準行高為兩行的高度 (適用於合併欄位)
+                # 基準行高為兩行的高度 (適用於合併欄位: 4.0mm * 2 + 1mm 邊距 = 9mm)
                 base_height = 9.0 
                 
                 # 計算備註行高 (備註是第 7 欄，索引 6)
                 note_width = col_widths[6]
                 note_text = str(data_row_to_write[6])
-                # get_string_width 配合 MultiCell 的換行邏輯來估算行高
                 if note_text:
                     # 估算行數 (每行文字寬度 * 0.9 留白)
                     num_lines_note = pdf.get_string_width(note_text) // (note_width * 0.9) + 1 
@@ -467,15 +469,24 @@ def create_pdf_report(dept):
                 else:
                     note_height = 4.5 # 至少一行高
                 
-                # 行高取 合併欄位基準高度、備註行高、以及最小高度 7.0 的最大值
-                row_height = max(base_height, note_height, 7.0) 
+                # 計算適用班級行高 (適用班級是第 2 欄，索引 1)
+                class_width = col_widths[1]
+                class_text = str(data_row_to_write[1])
+                if class_text:
+                    num_lines_class = pdf.get_string_width(class_text) // (class_width * 0.9) + 1
+                    class_height = num_lines_class * 4.5
+                else:
+                    class_height = 4.5
+                
+                # 行高取 合併欄位基準高度、備註行高、適用班級行高、以及最小高度 7.0 的最大值
+                row_height = max(base_height, note_height, class_height, 7.0) 
                 
                 # 2. 檢查是否需要換頁
                 if pdf.get_y() + row_height > pdf.page_break_trigger:
                     pdf.add_page()
                     pdf.set_font(CHINESE_FONT, 'B', 12)
                     pdf.set_fill_color(200, 220, 255)
-                    pdf.cell(0, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
+                    pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
                     render_table_header(pdf)
                     
                 # 3. 繪製儲存格
@@ -489,11 +500,9 @@ def create_pdf_report(dept):
                     pdf.cell(w, row_height, "", 1, 0, 'L')
                     
                     # 寫入內容
-                    pdf.set_xy(start_x, start_y) 
-                    
                     pdf.set_font(CHINESE_FONT, '', 8)
                     
-                    if i in [2, 3, 4, 5]: # 教科書, 冊次, 出版社, 審定字號 (需要兩行)
+                    if i in [2, 3, 4, 5]: # 教科書, 冊次, 出版社, 審定字號 (兩行合併欄位)
                         # 讓兩行內容垂直置中 (y_pos 調整)
                         y_offset = (row_height - base_height) / 2 + 0.5
                         pdf.set_xy(start_x, start_y + y_offset)
@@ -502,7 +511,7 @@ def create_pdf_report(dept):
                         
                         # 使用 MultiCell，每行 4.0mm 高度
                         pdf.multi_cell(w, 4.0, str(text), 0, align, 0)
-                    else: # 課程名稱, 適用班級, 備註 (單行/多行，垂直置中)
+                    else: # 課程名稱[0], 適用班級[1], 備註[6] (單行/多行，垂直置中)
                         
                         # 計算垂直置中位置
                         num_lines_in_cell = (pdf.get_string_width(str(text)) // (w * 0.9) + 1)
@@ -531,7 +540,8 @@ def create_pdf_report(dept):
         footer_text.append("實習主任：")
     footer_text.append("校長：")
     
-    cell_width = 280 / len(footer_text)
+    # 使用表格總寬度來計算簽名欄位寬度
+    cell_width = TOTAL_TABLE_WIDTH / len(footer_text)
     
     for text in footer_text:
         pdf.cell(cell_width, 10, text, 'B', 0, 'L')
