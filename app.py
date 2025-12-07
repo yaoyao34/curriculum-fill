@@ -10,8 +10,6 @@ import uuid
 # --- NEW: Import FPDF for PDF generation
 from fpdf import FPDF 
 
-# (保持所有全域設定不變)
-
 # --- 全域設定 ---
 SPREADSHEET_NAME = "教科書填報" 
 SHEET_HISTORY = "DB_History"
@@ -33,7 +31,7 @@ DEPT_SPECIFIC_CONFIG = {
     "製圖科": { "普通科": ["製圖"], "建教班": [], "實用技能班": [] }
 }
 
-# (保持 get_connection, load_data, get_course_list, save_single_row, delete_row_from_db 不變)
+# --- 1. 連線設定 ---
 @st.cache_resource
 def get_connection():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -371,11 +369,10 @@ def create_pdf_report(dept):
     
     # 註冊中文字體 - 這是解決中文顯示的關鍵步驟
     try:
-        # 假設您的中文字體檔名為 NotoSansCJKtc-Regular.ttf
-        # 確保此文件已上傳至專案根目錄
+        # 假設您的中文字體檔名為 NotoSansCJKtc-Regular.ttf (請確保此文件已上傳至專案根目錄)
         pdf.add_font(CHINESE_FONT, '', 'NotoSansCJKtc-Regular.ttf', uni=True) 
-        pdf.add_font(CHINESE_FONT, 'B', 'NotoSansCJKtc-Regular.ttf', uni=True) # 粗體也使用同一個檔案
-        pdf.add_font(CHINESE_FONT, 'I', 'NotoSansCJKtc-Regular.ttf', uni=True) # 斜體也使用同一個檔案
+        pdf.add_font(CHINESE_FONT, 'B', 'NotoSansCJKtc-Regular.ttf', uni=True) 
+        pdf.add_font(CHINESE_FONT, 'I', 'NotoSansCJKtc-Regular.ttf', uni=True) 
     except Exception as e:
         # 如果找不到字體，退回到 Helvetica，但中文會無法顯示
         st.warning(f"🚨 警告: 無法載入中文字體 NotoSansCJKtc-Regular.ttf ({e})。中文將無法顯示。請確保檔案已存在。")
@@ -505,10 +502,10 @@ def create_pdf_report(dept):
         pdf.cell(cell_width, 10, text, 'B', 0, 'L')
     pdf.ln()
 
-    # 返回 PDF 內容 (bytes)
-    return pdf.output(dest='S').encode('latin-1')
+    # **核心修正：移除 .encode('latin-1')，因為 pdf.output(dest='S') 已經返回 bytes。**
+    return pdf.output(dest='S')
 
-# (保持 get_all_possible_classes, get_target_classes_for_dept, update_class_list_from_checkboxes, toggle_all_checkboxes, on_multiselect_change, on_editor_change, auto_load_data 不變)
+# --- 6. 班級計算邏輯 (核心修正區) ---
 def get_all_possible_classes(grade):
     """取得該年級全校所有可能的班級"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
@@ -968,7 +965,11 @@ def main():
                     pdf_report_bytes = create_pdf_report(dept)
                     
                     if pdf_report_bytes:
-                        b64 = base64.b64encode(pdf_report_bytes).decode('latin-1')
+                        # base64.b64encode 接受 bytes，回傳 bytes
+                        b64_bytes = base64.b64encode(pdf_report_bytes)
+                        # 將 base64 bytes 解碼為字串，用於 HTML a 標籤
+                        b64 = b64_bytes.decode('latin-1') 
+                        
                         # 提供 PDF 下載連結
                         href = f'<a href="data:application/pdf;base64,{b64}" download="{dept}_教科書總表.pdf" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">⬇️ 點此下載完整 PDF 報表 (含上下學期/各年級)</a>'
                         st.markdown(href, unsafe_allow_html=True)
