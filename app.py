@@ -448,7 +448,8 @@ def create_pdf_report(dept):
                 v1 = str(row.get('冊次(1)', '')).strip()
                 p1 = str(row.get('出版社(1)', '')).strip()
                 c1 = str(row.get('審定字號(1)') or row.get('字號(1)', '')).strip()
-                r1 = str(row.get('備註1', '')).strip()
+                # 備註欄位，使用 .get() 確保欄位不存在時不會出錯
+                r1 = str(row.get('備註1', '')).strip() 
                 
                 b2 = str(row.get('教科書(優先2)') or row.get('教科書(2)', '')).strip()
                 v2 = str(row.get('冊次(2)', '')).strip()
@@ -1014,13 +1015,11 @@ def main():
         
         # --- 修正 10: 調整 Streamlit data_editor 的欄寬配置 ---
         # 總寬度: 100%
-        # 課程名稱: medium
-        # 適用班級: medium
-        # 教科書(1/2): medium
-        # 冊次(1/2): small
-        # 出版社(1/2): small
-        # 審定字號(1/2): small (與冊次同寬)
-        # 備註(1/2): small (與出版社同寬)
+        # 欄位寬度: 
+        #   冊次(1/2) = small
+        #   審定字號(1/2) = small (與冊次同寬)
+        #   出版社(1/2) = small
+        #   備註(1/2) = small (與出版社同寬)
         
         edited_df = st.data_editor(
             st.session_state['data'],
@@ -1043,21 +1042,19 @@ def main():
                 "冊次(1)": st.column_config.TextColumn("冊次(1)", width="small", disabled=True), 
                 "出版社(1)": st.column_config.TextColumn("出版社(1)", width="small", disabled=True),
                 "審定字號(1)": st.column_config.TextColumn("字號(1)", width="small", disabled=True),
-                "備註1": st.column_config.TextColumn("備註(1)", width="small", disabled=True), # 與出版社同寬 (small)
+                "備註1": st.column_config.TextColumn("備註(1)", width="small", disabled=True), 
                 
                 "教科書(優先2)": st.column_config.TextColumn("教科書(2)", width="medium", disabled=True),
                 "冊次(2)": st.column_config.TextColumn("冊次(2)", width="small", disabled=True), 
                 "出版社(2)": st.column_config.TextColumn("出版社(2)", width="small", disabled=True),
                 "審定字號(2)": st.column_config.TextColumn("字號(2)", width="small", disabled=True),
-                "備註2": st.column_config.TextColumn("備註(2)", width="small", disabled=True), # 與出版社同寬 (small)
+                "備註2": st.column_config.TextColumn("備註(2)", width="small", disabled=True), 
             },
-            # 調整欄位順序以符合要求：冊次/審定字號同寬，出版社/備註同寬
+            # 調整欄位順序以符合要求：審定字號和備註與對應的冊次/出版社放在一起
             column_order=[
                 "勾選", "課程類別", "課程名稱", "適用班級",
-                "教科書(優先1)", "冊次(1)", "出版社(1)", 
-                "教科書(優先2)", "冊次(2)", "出版社(2)",
-                "審定字號(1)", "備註1", # 放在同一列的邏輯是錯誤的，data_editor必須是獨立欄位，這裡僅調整視覺上的寬度配置
-                "審定字號(2)", "備註2" 
+                "教科書(優先1)", "冊次(1)", "審定字號(1)", "出版社(1)", "備註1", 
+                "教科書(優先2)", "冊次(2)", "審定字號(2)", "出版社(2)", "備註2" 
             ]
         )
 
