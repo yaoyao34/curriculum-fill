@@ -7,6 +7,10 @@ import json
 import base64
 import uuid
 
+# --- NEW: Import FPDF for PDF generation
+# 注意: 部署時需確保環境安裝 'pip install fpdf2'
+from fpdf import FPDF 
+
 # --- 全域設定 ---
 SPREADSHEET_NAME = "教科書填報" 
 SHEET_HISTORY = "DB_History"
@@ -39,6 +43,15 @@ def get_connection():
         except json.JSONDecodeError:
             st.error("Secrets 格式錯誤")
             return None
+        except ValueError: # 處理可能不是 JSON 的情況
+            try:
+                # 假設 GCP_CREDENTIALS 是一個 Base64 編碼的 JSON
+                creds_json_str = base64.b64decode(st.secrets["GCP_CREDENTIALS"]).decode('utf-8')
+                creds_dict = json.loads(creds_json_str)
+                creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+            except Exception as e:
+                st.error(f"Secrets 格式錯誤或 Base64 解碼失敗: {e}")
+                return None
     else:
         try:
             creds = Credentials.from_service_account_file('credentials.json', scopes=scope)
@@ -111,8 +124,8 @@ def load_data(dept, semester, grade):
         
         sub_matches = pd.DataFrame()
         if not df_sub.empty:
-             mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
-             sub_matches = df_sub[mask_sub]
+            mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
+            sub_matches = df_sub[mask_sub]
 
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
@@ -176,6 +189,8 @@ def get_course_list():
 # --- 4. 存檔 (單筆寫入) ---
 def save_single_row(row_data, original_key=None):
     client = get_connection()
+    if not client: return False
+    
     sh = client.open(SPREADSHEET_NAME)
     try:
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
@@ -247,6 +262,7 @@ def delete_row_from_db(target_uuid):
     if not target_uuid: return False
     
     client = get_connection()
+    if not client: return False
     sh = client.open(SPREADSHEET_NAME)
     try:
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
@@ -271,18 +287,43 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# --- 5. 產生 HTML 報表 ---
-def create_full_report(dept):
+# --- 5. 產生 PDF 報表 (取代原本的 HTML 報表功能) ---
+def create_pdf_report(dept):
+    """
+    從 Google Sheet 抓取該科別所有資料 (Submission_Records)，並使用 FPDF 生成 PDF 報表。
+    返回 PDF 內容的 bytes。
+    """
+    
+    # 內部類別用於自訂 PDF 頁首/頁尾
+    class PDF(FPDF):
+        def header(self):
+            # 注意：為支援中文，用戶需自行註冊中文字體（例如 NotoSansCJK），否則中文會亂碼或不顯示。
+            # 實際使用時，請將 'Helvetica' 替換為已註冊的中文字體名稱。
+            self.set_font('Helvetica', 'B', 16) 
+            self.cell(0, 10, f'{dept} 114學年度 教科書選用總表', 0, 1, 'C')
+            self.set_font('Helvetica', '', 10)
+            self.cell(0, 5, f"列印時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", 0, 1, 'R')
+            self.ln(5)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Helvetica', 'I', 8)
+            self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, 0, 'C')
+            
+    # --- 1. 資料讀取與處理 ---
     client = get_connection()
+    if not client: return None
+    
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
         data = ws_sub.get_all_values()
-        if not data: return "<h1>尚無提交資料</h1>"
+        if not data: return None
         
         headers = data[0]
         rows = data[1:]
         
+        # 處理重複的欄位名稱
         seen = {}
         new_headers = []
         for col in headers:
@@ -291,9 +332,9 @@ def create_full_report(dept):
                 seen[c] += 1
                 new_name = f"{c}({seen[c]})"
                 if c == '冊次': new_name = f"冊次({seen[c]})"
-                if c == '出版社': new_name = f"出版社({seen[c]})"
-                if c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
-                if c == '教科書': new_name = f"教科書(優先{seen[c]})"
+                elif c == '出版社': new_name = f"出版社({seen[c]})"
+                elif c == '字號' or c == '審定字號': new_name = f"審定字號({seen[c]})"
+                elif c == '教科書': new_name = f"教科書(優先{seen[c]})"
                 new_headers.append(new_name)
             else:
                 seen[c] = 1
@@ -304,129 +345,158 @@ def create_full_report(dept):
                 elif c == '字號' or c == '審定字號': new_headers.append('審定字號(1)')
                 else: new_headers.append(c)
         
-        df = pd.DataFrame(rows, columns=new_headers)
+        df_full = pd.DataFrame(rows, columns=new_headers)
         
-    except Exception as e:
-        return f"<h1>讀取失敗：{e}</h1>"
-    
-    if df.empty:
-        return f"<h1>{dept} 尚無提交資料</h1>"
+        if df_full.empty: return None
+
+        df = df_full[df_full['科別'] == dept].copy()
         
-    if '年級' in df.columns: df['年級'] = df['年級'].astype(str)
-    if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
+        if df.empty: return None
+
+        # 資料清洗與排序 (僅保留最新的填報紀錄)
+        if '年級' in df.columns: df['年級'] = df['年級'].astype(str)
+        if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
+        df = df.sort_values(by='填報時間')
+        df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
+        
+    except Exception:
+        return None
+        
+    # --- 2. PDF 生成 ---
+    pdf = PDF(orientation='L', unit='mm', format='A4') # 橫向 A4
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
     
-    df = df[df['科別'] == dept]
-    if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
+    # 給用戶的字體提示 (中文必須要這一步)
+    pdf.set_font('Helvetica', '', 8)
+    pdf.cell(0, 5, "NOTE: For proper Chinese display, please register a CJK font (e.g., pdf.add_font('NotoSans', '', 'NotoSansCJKsc-Regular.ttf', uni=True)) and use it.", 0, 1)
+    pdf.ln(2)
+
+    # 定義表格欄位與寬度 (總寬度 259mm)
+    col_widths = [30, 25, 30, 12, 20, 25, 30, 12, 20, 25, 30] 
+    col_names = [
+        "課程名稱", "適用班級", 
+        "教科書(1)", "冊次(1)", "出版社(1)", "審定字號(1)",
+        "教科書(2)", "冊次(2)", "出版社(2)", "審定字號(2)",
+        "備註"
+    ]
     
-    df = df.sort_values(by='填報時間')
-    df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
+    def render_table_header(pdf):
+        """繪製表格標頭，支援 MultiCell 換行"""
+        pdf.set_font('Helvetica', 'B', 9) 
+        pdf.set_fill_color(220, 220, 220)
+        start_x = pdf.get_x()
+        start_y = pdf.get_y()
+        # 使用 MultiCell 繪製標頭
+        for w, name in zip(col_widths, col_names):
+            pdf.set_xy(start_x, start_y)
+            pdf.multi_cell(w, 7, name, 1, 'C', 1) 
+            start_x += w
+        pdf.set_xy(pdf.l_margin, start_y + 7) # 移至下一行
+        pdf.set_font('Helvetica', '', 8) # 切回內文文字
+        
+    # 依學期和年級分組繪製表格
+    pdf.set_font('Helvetica', '', 8)
     
-    is_vocational = dept in DEPT_SPECIFIC_CONFIG
-    
-    html = f"""
-    <html>
-    <head>
-        <title>{dept} 教科書選用總表</title>
-        <style>
-            body {{ font-family: 'Microsoft JhengHei', sans-serif; padding: 20px; }}
-            h1 {{ text-align: center; }}
-            h2 {{ background-color: #eee; padding: 5px; border-left: 5px solid #333; }}
-            h3 {{ margin-top: 15px; border-bottom: 1px solid #ccc; }}
-            table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-            th, td {{ border: 1px solid black; padding: 6px; text-align: center; font-size: 13px; vertical-align: middle; }}
-            th {{ background-color: #f2f2f2; }}
-            .book-cell {{ padding: 2px 0; }}
-            .book-secondary {{ color: blue; font-size: 0.9em; border-top: 1px dashed #ccc; margin-top: 4px; padding-top: 2px; display: block; }}
-            .footer {{ margin-top: 50px; display: flex; justify-content: space-between; }}
-            .footer div {{ width: 18%; border-bottom: 1px solid black; padding-bottom: 5px; text-align: left; margin-right: 5px; }}
-        </style>
-    </head>
-    <body>
-        <h1>{dept} 114學年度 教科書選用總表</h1>
-        <p style="text-align:center;">列印時間：{datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
-    """
-    
-    for sem in ['1', '2']:
-        html += f"<h2>第 {sem} 學期</h2>"
+    for sem in sorted(df['學期'].unique()):
         sem_df = df[df['學期'] == sem]
         
-        if sem_df.empty:
-            html += "<p>尚無資料</p>"
-        else:
-            for g in sorted(sem_df['年級'].unique()):
-                grade_df = sem_df[sem_df['年級'] == str(g)]
-                if not grade_df.empty:
-                    html += f"<h3>【{g} 年級】</h3>"
-                    html += """
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width:15%">課程名稱</th>
-                                <th style="width:15%">適用班級</th>
-                                <th style="width:25%">教科書名稱</th>
-                                <th style="width:5%">冊次</th>
-                                <th style="width:10%">出版社</th>
-                                <th style="width:10%">字號</th>
-                                <th style="width:20%">備註</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                    """
-                    grade_df = grade_df.sort_values(by='課程名稱')
-                    for _, row in grade_df.iterrows():
-                        def mk_cell(v1, v2):
-                            v1_s = str(v1) if v1 else ""
-                            if not v2: return f"<div class='book-cell'>{v1_s}</div>"
-                            v2_s = str(v2) if v2 else ""
-                            return f"<div class='book-cell'>{v1_s}</div><div class='book-secondary'>{v2_s}</div>"
+        # 學期標頭
+        pdf.set_font('Helvetica', 'B', 12)
+        pdf.set_fill_color(200, 220, 255)
+        pdf.cell(0, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
+        
+        for g in sorted(sem_df['年級'].unique()):
+            grade_df = sem_df[sem_df['年級'] == str(g)]
+            if not grade_df.empty:
+                # 年級標頭
+                pdf.set_font('Helvetica', 'B', 10)
+                pdf.cell(0, 7, f"【{g} 年級】", 0, 1, 'L')
+                
+                grade_df = grade_df.sort_values(by='課程名稱')
+                
+                render_table_header(pdf)
 
-                        b2 = row.get('教科書(优先2)') or row.get('教科書(2)', '')
-                        v2 = row.get('冊次(2)', '')
-                        p2 = row.get('出版社(2)', '')
-                        c2 = row.get('審定字號(2)') or row.get('字號(2)', '')
+                for _, row in grade_df.iterrows():
+                    
+                    data_row_to_write = [
+                        row['課程名稱'],
+                        row['適用班級'],
+                        row.get('教科書(優先1)') or row.get('教科書(1)', ''), row.get('冊次(1)', ''), row.get('出版社(1)', ''), row.get('審定字號(1)') or row.get('字號(1)', ''),
+                        row.get('教科書(優先2)') or row.get('教科書(2)', ''), row.get('冊次(2)', ''), row.get('出版社(2)', ''), row.get('審定字號(2)') or row.get('字號(2)', ''),
+                        row.get('備註', '')
+                    ]
+                    
+                    # 1. 計算最大行高 (用於 MultiCell 換行)
+                    max_row_height = 0
+                    pdf.set_font('Helvetica', '', 8)
+                    for w, text in zip(col_widths, data_row_to_write):
+                        num_lines = pdf.get_string_width(str(text)) // (w * 0.9) + 1 
+                        max_row_height = max(max_row_height, num_lines * 4.5) 
+                    
+                    row_height = max(7.0, max_row_height) 
+                    
+                    # 2. 檢查是否需要換頁
+                    if pdf.get_y() + row_height > pdf.page_break_trigger:
+                        pdf.add_page()
+                        pdf.set_font('Helvetica', 'B', 12)
+                        pdf.set_fill_color(200, 220, 255)
+                        pdf.cell(0, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
+                        pdf.set_font('Helvetica', 'B', 10)
+                        pdf.cell(0, 7, f"【{g} 年級】 (續)", 0, 1, 'L')
+                        render_table_header(pdf)
                         
-                        b1 = row.get('教科書(优先1)') or row.get('教科書(1)', '')
-                        v1 = row.get('冊次(1)', '')
-                        p1 = row.get('出版社(1)', '')
-                        c1 = row.get('審定字號(1)') or row.get('字號(1)', '')
+                    # 3. 繪製儲存格
+                    start_x = pdf.get_x()
+                    start_y = pdf.get_y()
+                    
+                    for i, (w, text) in enumerate(zip(col_widths, data_row_to_write)):
                         
-                        book_cell = mk_cell(b1, b2)
-                        vol_cell = mk_cell(v1, v2)
-                        pub_cell = mk_cell(p1, p2)
-                        code_cell = mk_cell(c1, c2)
+                        # 繪製單元格邊框/背景
+                        pdf.set_xy(start_x, start_y)
+                        pdf.cell(w, row_height, "", 1, 0, 'L')
                         
-                        html += f"""
-                            <tr>
-                                <td>{row['課程名稱']}</td>
-                                <td>{row['適用班級']}</td>
-                                <td>{book_cell}</td>
-                                <td>{vol_cell}</td>
-                                <td>{pub_cell}</td>
-                                <td>{code_cell}</td>
-                                <td>{row.get('備註', '')}</td>
-                            </tr>
-                        """
-                    html += "</tbody></table>"
+                        # 寫入內容
+                        # 垂直置中計算 (簡化版)
+                        num_lines_in_cell = (pdf.get_string_width(str(text)) // (w * 0.9) + 1)
+                        y_pos = start_y + (row_height - num_lines_in_cell * 4.5) / 2
+                        pdf.set_xy(start_x, y_pos) 
+                        
+                        # 欄位對齊方式: 窄欄位居中，寬欄位靠左
+                        align = 'C' if w < 25 and i not in [1, 6, 10] else 'L'
 
-    html += """
-        <div class="footer">
-            <div>填表人：</div>
-            <div>召集人：</div>
-            <div>教務主任：</div>
-    """
-    if is_vocational:
-        html += "<div>實習主任：</div>"
+                        pdf.set_font('Helvetica', '', 8)
+                        pdf.multi_cell(w, 4.5, str(text), 0, align, 0)
+                        
+                        # 手動移動 X 座標
+                        start_x += w 
+                    
+                    # 移動 Y 座標到下一行
+                    pdf.set_y(start_y + row_height)
+                    
+                pdf.ln(5) 
     
-    html += """
-            <div>校長：</div>
-        </div>
-    </body>
-    </html>
-    """
-    return html
+    
+    # 頁尾簽名區
+    pdf.set_font('Helvetica', '', 10)
+    pdf.ln(10)
+    
+    is_vocational = dept in DEPT_SPECIFIC_CONFIG
+    footer_text = ["填表人：", "召集人：", "教務主任："]
+    if is_vocational:
+        footer_text.append("實習主任：")
+    footer_text.append("校長：")
+    
+    cell_width = 280 / len(footer_text)
+    
+    for text in footer_text:
+        pdf.cell(cell_width, 10, text, 'B', 0, 'L')
+    pdf.ln()
+
+    # 返回 PDF 內容 (bytes)
+    return pdf.output(dest='S').encode('latin-1')
 
 # --- 6. 班級計算邏輯 (核心修正區) ---
-
 def get_all_possible_classes(grade):
     """取得該年級全校所有可能的班級"""
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
@@ -567,11 +637,11 @@ def on_editor_change():
     else:
         current_idx = st.session_state.get('edit_index')
         if current_idx is not None and str(current_idx) in edits:
-             if edits[str(current_idx)].get("勾選") is False:
-                 st.session_state['data'].at[current_idx, "勾選"] = False
-                 st.session_state['edit_index'] = None
-                 st.session_state['original_key'] = None
-                 st.session_state['current_uuid'] = None
+            if edits[str(current_idx)].get("勾選") is False:
+                st.session_state['data'].at[current_idx, "勾選"] = False
+                st.session_state['edit_index'] = None
+                st.session_state['original_key'] = None
+                st.session_state['current_uuid'] = None
 
 def auto_load_data():
     dept = st.session_state.get('dept_val')
@@ -702,8 +772,8 @@ def main():
                         uuid_to_del = st.session_state.get('current_uuid')
                         
                         with st.spinner("同步資料庫..."):
-                             if uuid_to_del:
-                                 delete_row_from_db(uuid_to_del)
+                            if uuid_to_del:
+                                delete_row_from_db(uuid_to_del)
                         
                         st.session_state['data'] = st.session_state['data'].drop(idx).reset_index(drop=True)
                         st.session_state['edit_index'] = None
@@ -774,7 +844,7 @@ def main():
                 if st.button("🔄 更新表格 (存檔)", type="primary", use_container_width=True):
                     # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
-                         st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
+                        st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
                         idx = st.session_state['edit_index']
                         current_uuid = st.session_state.get('current_uuid')
@@ -815,7 +885,7 @@ def main():
                 if st.button("➕ 加入表格 (存檔)", type="primary", use_container_width=True):
                     # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
-                         st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
+                        st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
                         new_uuid = str(uuid.uuid4())
                         new_row = {
@@ -880,13 +950,20 @@ def main():
 
         col_submit, _ = st.columns([1, 4])
         with col_submit:
-            if st.button("📄 轉 PDF (下載 HTML 報表)", type="primary", use_container_width=True):
-                with st.spinner("正在產生全學期報表..."):
-                    html_report = create_full_report(dept)
-                    b64 = base64.b64encode(html_report.encode('utf-8')).decode()
-                    href = f'<a href="data:text/html;base64,{b64}" download="{dept}_教科書總表.html" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">📄 點此下載完整報表 (含上下學期/各年級)</a>'
-                    st.markdown(href, unsafe_allow_html=True)
-                    st.success("✅ 報表已生成！")
+            # --- 核心修改區域：呼叫 PDF 生成函式，並提供下載連結 ---
+            if st.button("📄 轉 PDF 報表 (下載)", type="primary", use_container_width=True):
+                with st.spinner(f"正在抓取 {dept} 所有資料並產生 PDF 報表..."):
+                    pdf_report_bytes = create_pdf_report(dept)
+                    
+                    if pdf_report_bytes:
+                        b64 = base64.b64encode(pdf_report_bytes).decode('latin-1')
+                        # 提供 PDF 下載連結
+                        href = f'<a href="data:application/pdf;base64,{b64}" download="{dept}_教科書總表.pdf" style="text-decoration:none; color:white; background-color:#b31412; padding:10px 20px; border-radius:5px; font-weight:bold;">⬇️ 點此下載完整 PDF 報表 (含上下學期/各年級)</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                        st.success("✅ PDF 報表已生成！")
+                    else:
+                        st.error("❌ PDF 報表生成失敗，請檢查資料或連線設定。**（若中文亂碼，請依 NOTE 註冊中文字體）**")
+            # --- 核心修改結束 ---
 
     else:
         st.info("👈 請先在左側選擇科別")
