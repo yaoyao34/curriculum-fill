@@ -133,9 +133,11 @@ def load_data(dept, semester, grade):
         if not sub_matches.empty:
             for _, s_row in sub_matches.iterrows():
                 
-                # --- 修正 1.1: 簡化安全讀取邏輯，避免 ambigious ValueError ---
-                # 使用 .get() 確保欄位不存在時返回空字串，而不是嘗試索引一個不存在的鍵
-                備註1_val = str(s_row.get('備註1', '') or s_row.get('備註', '')).strip()
+                # --- 修正 1.1: 使用 next() 尋找第一個非空值，避免 ValueError ---
+                # 確保返回的是純字串，如果所有備註欄位都找不到值，則返回空字串 ''
+                備註1_val = next((str(s_row.get(col, '')).strip() 
+                                  for col in ['備註1', '備註'] 
+                                  if str(s_row.get(col, '')).strip()), '').strip()
                 備註2_val = str(s_row.get('備註2', '')).strip()
 
                 display_rows.append({
@@ -167,7 +169,9 @@ def load_data(dept, semester, grade):
                     final_class = hist_class if hist_class else default_class
                     
                     # --- 修正 1.2: 簡化安全讀取邏輯，避免 ambigious ValueError ---
-                    備註1_val = str(h_row.get('備註1', '') or h_row.get('備註', '')).strip()
+                    備註1_val = next((str(h_row.get(col, '')).strip() 
+                                      for col in ['備註1', '備註'] 
+                                      if str(h_row.get(col, '')).strip()), '').strip()
                     備註2_val = str(h_row.get('備註2', '')).strip()
 
                     display_rows.append({
@@ -472,6 +476,10 @@ def create_pdf_report(dept):
                     # 確保所有輸入都是非空字串
                     val1 = val1 if val1 else ""
                     val2 = val2 if val2 else ""
+                    
+                    # 徹底檢查 val1, val2 是否為 Pandas/NoneType (應該不會了，但以防萬一)
+                    if isinstance(val1, (pd.Series, pd.DataFrame)) or isinstance(val2, (pd.Series, pd.DataFrame)):
+                         return ""
                     
                     if not val1 and not val2:
                         return ""
