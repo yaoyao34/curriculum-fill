@@ -136,6 +136,7 @@ def load_data(dept, semester, grade):
             hist_matches = df_hist[df_hist['課程名稱'] == c_name]
 
             if not hist_matches.empty:
+                # 優先找班級完全符合的
                 exact_match = hist_matches[hist_matches['適用班級'] == default_class]
                 target_rows = exact_match if not exact_match.empty else hist_matches
 
@@ -145,7 +146,7 @@ def load_data(dept, semester, grade):
                     
                     display_rows.append({
                         "勾選": False,
-                        "uuid": str(uuid.uuid4()), # 新載入的歷史資料給新的 UUID
+                        "uuid": str(uuid.uuid4()), 
                         "科別": dept, "年級": grade, "學期": semester,
                         "課程類別": c_type, "課程名稱": c_name,
                         "適用班級": final_class,
@@ -156,7 +157,7 @@ def load_data(dept, semester, grade):
             else:
                 display_rows.append({
                     "勾選": False,
-                    "uuid": str(uuid.uuid4()), # 新空白資料給新的 UUID
+                    "uuid": str(uuid.uuid4()), 
                     "科別": dept, "年級": grade, "學期": semester,
                     "課程類別": c_type, "課程名稱": c_name,
                     "適用班級": default_class,
@@ -177,8 +178,6 @@ def get_course_list():
 def save_single_row(row_data, original_key=None):
     client = get_connection()
     sh = client.open(SPREADSHEET_NAME)
-    
-    # 確保 Submission Sheet 存在且標頭正確
     try:
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
     except:
@@ -186,22 +185,15 @@ def save_single_row(row_data, original_key=None):
         ws_sub.append_row(["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"])
 
     all_values = ws_sub.get_all_values()
-    
-    # 初始化標頭 (如果完全是空的)
     if not all_values:
         headers = ["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"]
         ws_sub.append_row(headers)
-        all_values = [headers] # 更新本地快取
+        all_values = [headers] 
     
     headers = all_values[0]
     
-    # 檢查是否有 uuid 欄位 (舊資料相容)
     if "uuid" not in headers:
-        # 為了避免 insert_col 報錯，這裡簡單提示使用者手動刪除舊 Sheet 重建
-        # 或是採取 append 策略 (不強求第一欄是 uuid，只要有這欄就好)
-        # 但為了邏輯簡單，我們假設使用者已經把 Submission 清空重來了 (因為之前格式都不對)
-        # 這裡做一個簡單的防呆：如果沒有 uuid 欄位，就當作是最後一欄
-        ws_sub.clear() # 清空舊資料 (這是一個比較激進但有效的修復)
+        ws_sub.clear() 
         headers = ["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註"]
         ws_sub.append_row(headers)
         all_values = [headers]
@@ -210,7 +202,6 @@ def save_single_row(row_data, original_key=None):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     target_uuid = row_data.get('uuid')
     
-    # 構建資料字典
     data_dict = {
         "uuid": target_uuid,
         "填報時間": timestamp,
@@ -220,7 +211,6 @@ def save_single_row(row_data, original_key=None):
         "適用班級": row_data['適用班級'], "備註": row_data['備註']
     }
     
-    # 轉成寫入列表
     row_to_write = []
     for h in headers:
         val = ""
@@ -233,7 +223,6 @@ def save_single_row(row_data, original_key=None):
 
     target_row_index = -1
 
-    # 尋找 UUID
     if target_uuid:
         uuid_col_idx = col_map.get("uuid")
         if uuid_col_idx is not None:
@@ -243,13 +232,13 @@ def save_single_row(row_data, original_key=None):
                     break
 
     if target_row_index > 0:
-        # 更新
-        # range_name = f"A{target_row_index}:Z{target_row_index}" # 簡化範圍
-        # 為了安全，使用 update_cells 或 update
-        # 這裡使用 update，指定起始儲存格即可
-        ws_sub.update(range_name=f"A{target_row_index}", values=[row_to_write])
+        start_col_char = 'A'
+        end_col_char = chr(ord('A') + len(headers) - 1) 
+        if len(headers) > 26: end_col_char = 'Z' 
+
+        range_name = f"{start_col_char}{target_row_index}:{end_col_char}{target_row_index}"
+        ws_sub.update(range_name=range_name, values=[row_to_write])
     else:
-        # 新增
         ws_sub.append_row(row_to_write)
         
     return True
@@ -269,7 +258,7 @@ def delete_row_from_db(target_uuid):
     if not all_values: return False
     headers = all_values[0]
     
-    if "uuid" not in headers: return False
+    if "uuid" not in headers: return False 
     uuid_idx = headers.index("uuid")
     
     target_row_index = -1
@@ -331,6 +320,7 @@ def create_full_report(dept):
     if df.empty: return f"<h1>{dept} 尚無提交資料</h1>"
     
     df = df.sort_values(by='填報時間')
+    # 這裡的去重包含適用班級
     df = df.drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
     
     html = f"""
@@ -428,14 +418,12 @@ def get_all_possible_classes(grade):
     return sorted(list(set(classes)))
 
 def get_target_classes_for_dept(dept, grade, sys_name):
+    # 修改重點：無論科別為何，只要勾選該學制，就回傳該學制下 全校所有的班級。
     prefix = {"1": "一", "2": "二", "3": "三"}.get(str(grade), "")
     if not prefix: return []
-    suffixes = []
     
-    if dept in DEPT_SPECIFIC_CONFIG:
-        suffixes = DEPT_SPECIFIC_CONFIG[dept].get(sys_name, [])
-    else:
-        suffixes = ALL_SUFFIXES.get(sys_name, [])
+    suffixes = ALL_SUFFIXES.get(sys_name, [])
+        
     if str(grade) == "3" and sys_name == "建教班": return []
     return [f"{prefix}{s}" for s in suffixes]
 
@@ -511,6 +499,7 @@ def on_editor_change():
         
         class_str = str(row_data.get("適用班級", ""))
         class_list = [c.strip() for c in class_str.replace("，", ",").split(",") if c.strip()]
+        
         grade = st.session_state.get('grade_val')
         valid_classes = get_all_possible_classes(grade) if grade else []
         final_list = [c for c in class_list if c in valid_classes]
@@ -730,6 +719,7 @@ def main():
 
             if is_edit_mode:
                 if st.button("🔄 更新表格 (存檔)", type="primary", use_container_width=True):
+                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                          st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
@@ -762,6 +752,7 @@ def main():
                         st.session_state['active_classes'] = []
                         
                         st.session_state['edit_index'] = None
+                        st.session_state['original_key'] = None
                         st.session_state['current_uuid'] = None
                         st.session_state['editor_key_counter'] += 1 
                         
@@ -769,6 +760,7 @@ def main():
                         st.rerun()
             else:
                 if st.button("➕ 加入表格 (存檔)", type="primary", use_container_width=True):
+                    # 班級必填檢查
                     if not input_class_str or not input_book1 or not input_pub1 or not input_vol1:
                          st.error("⚠️ 適用班級、第一優先書名、冊次、出版社為必填！")
                     else:
@@ -786,8 +778,8 @@ def main():
                         }
                         
                         with st.spinner("正在寫入資料庫..."):
-                            save_single_row(new_row, None)
-                        
+                            save_single_row(new_row, None) # 新增無 key
+                            
                         st.session_state['data'] = pd.concat([st.session_state['data'], pd.DataFrame([new_row])], ignore_index=True)
                         st.session_state['editor_key_counter'] += 1
                         
