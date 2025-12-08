@@ -630,7 +630,7 @@ def create_pdf_report(dept):
         sem_df = df[df['學期'] == sem].copy()
         
         # 學期標頭
-        pdf.set_font(CHINESE_FONT, 'B', 8)
+        pdf.set_font(CHINESE_FONT, 'B', 14)
         pdf.set_fill_color(200, 220, 255)
         pdf.cell(TOTAL_TABLE_WIDTH, 10, f"第 {sem} 學期", 1, 1, 'L', 1)
         
@@ -1072,6 +1072,7 @@ def main():
         pass
 if __name__ == "__main__":
     main()
+
 
 
 
