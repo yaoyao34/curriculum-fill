@@ -580,7 +580,7 @@ def create_pdf_report(dept):
         
     # --- 2. PDF 生成 ---
     # 🌟 設定為橫向 (L)
-    pdf = PDF(orientation='L', unit='mm', format='A4') 
+    pdf = PDF(orientation='L', unit='mm', format='A3') 
     pdf.set_auto_page_break(auto=True, margin=15)
     
     try:
@@ -1072,5 +1072,6 @@ def main():
         pass
 if __name__ == "__main__":
     main()
+
 
 
