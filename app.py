@@ -564,7 +564,7 @@ def create_pdf_report(dept):
     def render_table_header(pdf):
         """繪製表格標頭"""
         # 標題字體加大到 11
-        pdf.set_font(CHINESE_FONT, 'B', 11) 
+        pdf.set_font(CHINESE_FONT, 'B', 12) 
         pdf.set_fill_color(220, 220, 220)
         start_x = pdf.get_x()
         start_y = pdf.get_y()
@@ -573,10 +573,10 @@ def create_pdf_report(dept):
             pdf.multi_cell(w, 8, name, 1, 'C', 1) # 高度微調為 8
             start_x += w
         pdf.set_xy(pdf.l_margin, start_y + 8) 
-        pdf.set_font(CHINESE_FONT, '', 10) # 🌟 內文改為 10pt
+        pdf.set_font(CHINESE_FONT, '', 12) # 🌟 內文改為 10pt
         
     # 依學期和年級分組繪製表格
-    pdf.set_font(CHINESE_FONT, '', 10) # 🌟 內文改為 10pt
+    pdf.set_font(CHINESE_FONT, '', 12) # 🌟 內文改為 10pt
     
     # 因字體變大，行高需增加
     LINE_HEIGHT = 5.5 
@@ -631,7 +631,7 @@ def create_pdf_report(dept):
                 ]
                 
                 # --- 動態計算高度 ---
-                pdf.set_font(CHINESE_FONT, '', 10) # 確保計算時用的是 10pt
+                pdf.set_font(CHINESE_FONT, '', 12) # 確保計算時用的是 10pt
                 
                 cell_line_counts = [] 
                 
@@ -1215,5 +1215,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
