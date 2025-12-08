@@ -555,8 +555,8 @@ def create_pdf_report(dept):
     
     col_names = [
         "課程名稱", "適用班級", 
-        "教科書", "次", "出版社", "審定字號",
-        "備註", "勾" # 新增欄位
+        "教科書", "冊次", "出版社", "審定字號",
+        "備註", "核定" # 新增欄位
     ]
     
     TOTAL_TABLE_WIDTH = sum(col_widths)
@@ -1215,6 +1215,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
