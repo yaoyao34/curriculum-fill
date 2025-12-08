@@ -688,7 +688,7 @@ def create_pdf_report(dept):
                     y_pos = start_y + (row_height - this_cell_content_height) / 2
                     
                     pdf.set_xy(start_x, y_pos)
-                    pdf.set_font(CHINESE_FONT, '', 10)
+                    pdf.set_font(CHINESE_FONT, '', 12)
                     
                     align = 'C' if i == 3 else 'L' 
                     pdf.multi_cell(w, LINE_HEIGHT, str(text), 0, align, 0)
@@ -1215,6 +1215,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
