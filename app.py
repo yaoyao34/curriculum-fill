@@ -460,10 +460,16 @@ def sync_history_to_db(dept, semester, grade):
         for _, row in target_hist.iterrows():
             h_uuid = str(row.get('uuid', '')).strip()
             if h_uuid and h_uuid not in existing_uuids:
-                # 這是 History 有，但 Submission 沒有的 -> 準備寫入
-                # 欄位對應 (需對應 Submission 的標頭順序)
-                # ["uuid", "填報時間", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
                 
+                # --- 微調開始：更安全的取值邏輯 (兼容舊欄位名) ---
+                def get_val(keys):
+                    """嘗試從多個可能的欄位名稱中取值"""
+                    for k in keys:
+                        if k in row and str(row[k]).strip():
+                            return str(row[k]).strip()
+                    return ""
+
+                # 這是 History 有，但 Submission 沒有的 -> 準備寫入
                 new_row = [
                     h_uuid,
                     timestamp,
@@ -471,18 +477,23 @@ def sync_history_to_db(dept, semester, grade):
                     str(row.get('學期', '')),
                     str(row.get('年級', '')),
                     row.get('課程名稱', ''),
-                    row.get('教科書(優先1)', ''),
-                    row.get('冊次(1)', ''),
-                    row.get('出版社(1)', ''),
-                    row.get('審定字號(1)', ''),
-                    row.get('教科書(優先2)', ''),
-                    row.get('冊次(2)', ''),
-                    row.get('出版社(2)', ''),
-                    row.get('審定字號(2)', ''),
+                    # 嘗試抓 '教科書(優先1)' 或 '教科書(1)' 或 '教科書'
+                    get_val(['教科書(優先1)', '教科書(1)', '教科書']),
+                    get_val(['冊次(1)', '冊次']),
+                    get_val(['出版社(1)', '出版社']),
+                    get_val(['審定字號(1)', '字號(1)', '審定字號', '字號']),
+                    # 第二優先
+                    get_val(['教科書(優先2)', '教科書(2)']),
+                    get_val(['冊次(2)']),
+                    get_val(['出版社(2)']),
+                    get_val(['審定字號(2)', '字號(2)']),
+                    # 其他
                     row.get('適用班級', ''),
-                    row.get('備註1', ''),
-                    row.get('備註2', '')
+                    get_val(['備註1', '備註']),
+                    get_val(['備註2'])
                 ]
+                # --- 微調結束 ---
+
                 rows_to_append.append(new_row)
 
         if rows_to_append:
@@ -1261,3 +1272,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
