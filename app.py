@@ -454,6 +454,7 @@ def delete_row_from_db(target_uuid):
     return False
 
 # --- 5. 產生 PDF 報表 (v3：直向 + 自動換行 + 動態高度) ---
+# --- 5. 產生 PDF 報表 (v4：橫向 + 字體10 + 校長核定框) ---
 def create_pdf_report(dept):
     """
     從 Google Sheet 抓取該科別所有資料 (Submission_Records)，並使用 FPDF 生成 PDF 報表。
@@ -466,8 +467,8 @@ def create_pdf_report(dept):
     # 內部類別用於自訂 PDF 頁首/頁尾
     class PDF(FPDF):
         def header(self):
-            # 使用已註冊的字體
-            self.set_font(CHINESE_FONT, 'B', 16) 
+            # 標題字體加大
+            self.set_font(CHINESE_FONT, 'B', 18) 
             self.cell(0, 10, f'{dept} 114學年度 教科書選用總表', 0, 1, 'C')
             self.set_font(CHINESE_FONT, '', 10)
             self.cell(0, 5, f"列印時間：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", 0, 1, 'R')
@@ -533,9 +534,9 @@ def create_pdf_report(dept):
         return None
         
     # --- 2. PDF 生成 ---
-    # 直向 A4
-    pdf = PDF(orientation='P', unit='mm', format='A4') 
-    pdf.set_auto_page_break(auto=True, margin=10)
+    # 🌟 設定為橫向 (L)
+    pdf = PDF(orientation='L', unit='mm', format='A4') 
+    pdf.set_auto_page_break(auto=True, margin=15)
     
     try:
         pdf.add_font(CHINESE_FONT, '', 'NotoSansCJKtc-Regular.ttf', uni=True) 
@@ -547,44 +548,46 @@ def create_pdf_report(dept):
         
     pdf.add_page()
     
-    # --- 欄位寬度 (直向 A4 優化版) ---
-    # 總寬 190mm
-    col_widths = [19, 59, 36, 10, 17, 26, 23] 
+    # --- 🌟 欄位寬度調整 (橫向 A4 總寬約 297mm，扣邊距可用約 277mm) ---
+    # 調整欄寬以容納 10pt 字體，並加入最後一欄「核定」
+    # 總和: 30+65+45+12+22+28+55+18 = 275mm
+    col_widths = [30, 65, 45, 12, 22, 28, 55, 18] 
     
     col_names = [
         "課程名稱", "適用班級", 
         "教科書", "冊次", "出版社", "審定字號",
-        "備註" 
+        "備註", "核定" # 新增欄位
     ]
     
     TOTAL_TABLE_WIDTH = sum(col_widths)
     
     def render_table_header(pdf):
         """繪製表格標頭"""
-        pdf.set_font(CHINESE_FONT, 'B', 9) 
+        # 標題字體加大到 11
+        pdf.set_font(CHINESE_FONT, 'B', 11) 
         pdf.set_fill_color(220, 220, 220)
         start_x = pdf.get_x()
         start_y = pdf.get_y()
         for w, name in zip(col_widths, col_names):
             pdf.set_xy(start_x, start_y)
-            pdf.multi_cell(w, 7, name, 1, 'C', 1) 
+            pdf.multi_cell(w, 8, name, 1, 'C', 1) # 高度微調為 8
             start_x += w
-        pdf.set_xy(pdf.l_margin, start_y + 7) 
-        pdf.set_font(CHINESE_FONT, '', 8) 
+        pdf.set_xy(pdf.l_margin, start_y + 8) 
+        pdf.set_font(CHINESE_FONT, '', 10) # 🌟 內文改為 10pt
         
     # 依學期和年級分組繪製表格
-    pdf.set_font(CHINESE_FONT, '', 8)
+    pdf.set_font(CHINESE_FONT, '', 10) # 🌟 內文改為 10pt
     
-    # 定義行高常數
-    LINE_HEIGHT = 4.5
+    # 因字體變大，行高需增加
+    LINE_HEIGHT = 5.5 
     
     for sem in sorted(df['學期'].unique()):
         sem_df = df[df['學期'] == sem].copy()
         
         # 學期標頭
-        pdf.set_font(CHINESE_FONT, 'B', 12)
+        pdf.set_font(CHINESE_FONT, 'B', 14)
         pdf.set_fill_color(200, 220, 255)
-        pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期", 1, 1, 'L', 1)
+        pdf.cell(TOTAL_TABLE_WIDTH, 10, f"第 {sem} 學期", 1, 1, 'L', 1)
         
         # 依 年級 -> 課程名稱 排序
         if not sem_df.empty:
@@ -605,7 +608,9 @@ def create_pdf_report(dept):
                 p2 = str(row.get('出版社(2)', '')).strip()
                 c2 = str(row.get('審定字號(2)') or row.get('字號(2)', '')).strip()
                 
-                # 輔助函式：換行顯示 (不變)
+                # 檢查是否有第二優先 (用於決定是否畫第二個勾選框)
+                has_priority_2 = (b2 != "" or v2 != "")
+                
                 def format_combined_cell(val1, val2):
                     val1 = val1 if val1 else ""
                     val2 = val2 if val2 else ""
@@ -614,6 +619,7 @@ def create_pdf_report(dept):
                     elif not val1: return val2
                     else: return f"{val1}\n{val2}"
                 
+                # 前7欄的資料
                 data_row_to_write = [
                     str(row['課程名稱']),
                     str(row['適用班級']),
@@ -621,96 +627,111 @@ def create_pdf_report(dept):
                     format_combined_cell(v1, v2), 
                     format_combined_cell(p1, p2), 
                     format_combined_cell(c1, c2), 
-                    format_combined_cell(r1, r2) 
+                    format_combined_cell(r1, r2)
                 ]
                 
-                # --- 核心修正：動態計算每一格需要的高度 ---
-                pdf.set_font(CHINESE_FONT, '', 8)
+                # --- 動態計算高度 ---
+                pdf.set_font(CHINESE_FONT, '', 10) # 確保計算時用的是 10pt
                 
-                cell_line_counts = [] # 儲存每一格需要的「行數」
+                cell_line_counts = [] 
                 
-                for i, (w, text) in enumerate(zip(col_widths, data_row_to_write)):
-                    # 先將手動換行符號 (\n) 切開
+                for i, text in enumerate(data_row_to_write):
+                    w = col_widths[i] # 對應寬度
                     segments = str(text).split('\n')
                     total_lines_for_cell = 0
                     
                     for seg in segments:
-                        # 扣除左右 padding (2mm) 後的可用寬度
                         safe_width = w - 2
                         if safe_width < 1: safe_width = 1
-                        
-                        # 取得這段文字的寬度
                         txt_width = pdf.get_string_width(seg)
                         
-                        # 計算這段文字會折成幾行
                         if txt_width > 0:
-                            # 無條件進位
                             lines_needed = math.ceil(txt_width / safe_width)
                         else:
-                            # 空行算 1 行，避免高度過小
                             lines_needed = 1 
-                            if not seg and len(segments) == 1 and text == "": lines_needed = 0 # 完全空白格
+                            if not seg and len(segments) == 1 and text == "": lines_needed = 0
                             
                         total_lines_for_cell += lines_needed
                     
-                    # 每一格至少要有一行的高度，避免計算錯誤
                     if total_lines_for_cell < 1: total_lines_for_cell = 1
                     cell_line_counts.append(total_lines_for_cell)
                 
-                # 找出這一列中，最高的那個格子需要幾行
                 max_lines_in_row = max(cell_line_counts)
                 
-                # 計算最終列高 (行數 * 行高 + 上下 Padding 3mm)
-                # 如果只有1行，高度給 7mm 比較好看；多行則依計算
-                calculated_height = max_lines_in_row * LINE_HEIGHT + 3
-                row_height = max(calculated_height, 8.0)
+                # 如果有第2優先，高度至少要能容納2行，不然勾選框會擠在一起
+                min_lines = 2 if has_priority_2 else 1
+                if max_lines_in_row < min_lines: max_lines_in_row = min_lines
+
+                calculated_height = max_lines_in_row * LINE_HEIGHT + 4 # 增加 padding
+                row_height = max(calculated_height, 10.0) # 最小高度 10mm
                 
                 # --- 換頁檢查 ---
                 if pdf.get_y() + row_height > pdf.page_break_trigger:
                     pdf.add_page()
-                    pdf.set_font(CHINESE_FONT, 'B', 12)
+                    pdf.set_font(CHINESE_FONT, 'B', 14)
                     pdf.set_fill_color(200, 220, 255)
-                    pdf.cell(TOTAL_TABLE_WIDTH, 8, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
+                    pdf.cell(TOTAL_TABLE_WIDTH, 10, f"第 {sem} 學期 (續)", 1, 1, 'L', 1)
                     render_table_header(pdf)
                     
                 # --- 繪製儲存格 ---
                 start_x = pdf.get_x()
                 start_y = pdf.get_y()
                 
-                for i, (w, text) in enumerate(zip(col_widths, data_row_to_write)):
+                # 1. 繪製前7欄 (文字資料)
+                for i, text in enumerate(data_row_to_write):
+                    w = col_widths[i]
                     
-                    # 1. 先畫外框 (高度統一)
                     pdf.set_xy(start_x, start_y)
-                    pdf.cell(w, row_height, "", 1, 0, 'L')
+                    pdf.cell(w, row_height, "", 1, 0, 'L') # 畫框
                     
-                    # 2. 計算內容垂直置中位置
-                    # 該格的實際內容高度
                     this_cell_content_height = cell_line_counts[i] * LINE_HEIGHT
                     y_pos = start_y + (row_height - this_cell_content_height) / 2
                     
-                    # 3. 寫入文字 (使用 MultiCell 自動換行)
                     pdf.set_xy(start_x, y_pos)
-                    pdf.set_font(CHINESE_FONT, '', 8)
+                    pdf.set_font(CHINESE_FONT, '', 10)
                     
-                    align = 'C' if i == 3 else 'L' # 冊次居中，其他靠左
-                    
-                    # MultiCell 會自動處理 \n 和自動換行
+                    align = 'C' if i == 3 else 'L' 
                     pdf.multi_cell(w, LINE_HEIGHT, str(text), 0, align, 0)
                         
                     start_x += w 
                 
-                # 移動到下一列的 Y
+                # 2. 🌟 繪製最後一欄：核定 (勾選框)
+                w_check = col_widths[7]
+                pdf.set_xy(start_x, start_y)
+                pdf.cell(w_check, row_height, "", 1, 0, 'L') # 畫框
+                
+                # 畫勾選方框 (大小 4mm)
+                box_size = 4
+                box_x = start_x + (w_check - box_size) / 2 - 2 # 稍微置中偏左
+                
+                # 第一優先的框 (位置在 row 上方 1/4 處)
+                y_p1 = start_y + (row_height * 0.25) - (box_size / 2)
+                pdf.rect(box_x, y_p1, box_size, box_size)
+                # 標示 "1"
+                pdf.set_xy(box_x + box_size + 1, y_p1)
+                pdf.set_font(CHINESE_FONT, '', 8)
+                pdf.cell(5, box_size, "1", 0, 0, 'L')
+                
+                # 如果有第二優先，畫第二個框 (位置在 row 下方 3/4 處)
+                if has_priority_2:
+                    y_p2 = start_y + (row_height * 0.75) - (box_size / 2)
+                    pdf.rect(box_x, y_p2, box_size, box_size)
+                    # 標示 "2"
+                    pdf.set_xy(box_x + box_size + 1, y_p2)
+                    pdf.cell(5, box_size, "2", 0, 0, 'L')
+
+                # 移動到下一列
                 pdf.set_y(start_y + row_height)
                     
             pdf.ln(5) 
     
     
     # 頁尾簽名區
-    pdf.set_font(CHINESE_FONT, '', 10)
+    pdf.set_font(CHINESE_FONT, '', 12) # 頁尾字體也稍微加大
     pdf.ln(10)
     
     is_vocational = dept in DEPT_SPECIFIC_CONFIG
-    footer_text = [ "填表：", "教務主任："]
+    footer_text = ["填表人：", "召集人：", "教務主任："]
     if is_vocational:
         footer_text.append("實習主任：")
     footer_text.append("校長：")
@@ -718,7 +739,7 @@ def create_pdf_report(dept):
     cell_width = TOTAL_TABLE_WIDTH / len(footer_text)
     
     for text in footer_text:
-        pdf.cell(cell_width, 10, text, 'B', 0, 'L')
+        pdf.cell(cell_width, 12, text, 'B', 0, 'L')
     pdf.ln()
 
     return pdf.output(dest='S')
@@ -1194,4 +1215,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
