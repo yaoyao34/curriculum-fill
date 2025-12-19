@@ -254,8 +254,11 @@ def normalize_df(headers, rows):
 # --- 3. 統一資料合併邏輯 (The Engine) ---
 def get_merged_data(dept, target_semester=None, target_grade=None):
     """
-    資料合併引擎：確保 Submission > History > Curriculum
-    並解決「單一科目在 History 有多筆但只顯示一筆」的問題
+    資料合併引擎：確保 History 中的多筆資料不會因為科目相同而被吃掉
+    邏輯：
+    1. 載入所有 Submission。
+    2. 載入所有 History，只要 UUID 不在 Submission 中，統統加入 (不管科目名是否重複)。
+    3. 載入 Curriculum，只有當某科目在 (Submission + History) 中完全沒出現過時，才補空白行。
     """
     
     sub_vals, hist_vals, curr_vals, _ = fetch_raw_dataframes()
@@ -273,12 +276,12 @@ def get_merged_data(dept, target_semester=None, target_grade=None):
     
     if '勾選' not in final_df.columns: final_df['勾選'] = False
     
-    # 用來記錄已經載入的 UUID，避免重複載入同一筆
-    # 這裡的 "同一筆" 嚴格定義為：來自 Submission 的資料，或者已經被 History 補入的資料
+    # 記錄已存在的 UUID (避免同一筆資料重複載入)
     existing_uuids = set(final_df['uuid'].tolist())
     
-    # 記錄有哪些課程已經出現過 (用於最後補空行)
-    existing_courses = set(final_df['課程名稱'].tolist())
+    # 記錄已出現的課程名稱 (用於最後判斷 Curriculum 是否需要補空行)
+    # 注意：這裡只是為了檢查「有沒有漏掉科目」，不是為了去重
+    courses_present_in_data = set(final_df['課程名稱'].tolist())
 
     # 2. 處理 History (補資料)
     use_hist = st.session_state.get('use_history_checkbox', False)
@@ -297,23 +300,22 @@ def get_merged_data(dept, target_semester=None, target_grade=None):
             
             target_hist = df_hist[mask_hist].copy()
             
-            # 🔥 修正邏輯：處理 History 中可能的重複 UUID 或空白 UUID
-            submission_uuids_snapshot = existing_uuids.copy() # 這是「已經填報過」的 UUID 集合
+            # 用來處理 History 內部可能重複 UUID 的情況
+            # 因為舊資料可能有兩筆內容不同但 UUID 相同的錯誤
+            temp_history_uuids = set()
 
             for _, row in target_hist.iterrows():
                 h_uuid = row.get('uuid', '')
                 if not h_uuid: h_uuid = str(uuid.uuid4())
                 
-                # 狀況 A：這個 UUID 已經在 Submission 裡了 -> 跳過 (以 Submission 為準)
-                if h_uuid in submission_uuids_snapshot:
+                # 狀況 A：這個 UUID 已經在 Submission 裡了 -> 跳過 (已被新的覆蓋)
+                if h_uuid in existing_uuids:
                     continue
                 
-                # 狀況 B：這個 UUID 還沒出現過 -> 加入
-                # 狀況 C：這個 UUID 雖然不在 Submission，但已經在 *這一次的 History 迴圈* 中出現過
-                #        (代表 History 資料庫本身有重複的 UUID，可能是複製貼上造成的)
-                #        -> 強制生成新 UUID，保留這筆資料，不讓它消失！
-                if h_uuid in existing_uuids:
-                    h_uuid = str(uuid.uuid4()) # 賦予新身分，確保資料不丟失
+                # 狀況 B：這個 UUID 在 Submission 沒出現，但在 History 內部已經出現過 (重複 UUID)
+                # -> 強制換發新身分證，確保這筆資料能活下來！
+                if h_uuid in temp_history_uuids:
+                    h_uuid = str(uuid.uuid4())
                 
                 row_data = row.to_dict()
                 row_data['uuid'] = h_uuid
@@ -323,8 +325,10 @@ def get_merged_data(dept, target_semester=None, target_grade=None):
                     if alt in row_data and k not in row_data: row_data[k] = row_data[alt]
                 
                 final_df = pd.concat([final_df, pd.DataFrame([row_data])], ignore_index=True)
-                existing_uuids.add(h_uuid)
-                existing_courses.add(row.get('課程名稱', ''))
+                
+                # 更新集合
+                temp_history_uuids.add(h_uuid)
+                courses_present_in_data.add(row.get('課程名稱', ''))
 
     # 3. 處理 Curriculum (補空課)
     if not df_curr.empty:
@@ -346,8 +350,11 @@ def get_merged_data(dept, target_semester=None, target_grade=None):
 
         for _, c_row in target_curr.iterrows():
             c_name = c_row['課程名稱']
-            # 只有當這個課程「完全沒出現」在目前的列表(Submission+History)時，才補空行
-            if c_name not in existing_courses:
+            
+            # 🔥 關鍵邏輯：只有當這個科目「完全沒出現過」才補空行
+            # 如果 History 裡已經有 2 筆該科目 (例如不同班級)，這裡就不會動作 (正確！)
+            # 這樣就達成了「History 有幾筆就顯示幾筆」+「如果沒有才用課綱補」的效果
+            if c_name not in courses_present_in_data:
                 new_row = {
                     "勾選": False, "uuid": str(uuid.uuid4()), "科別": dept,
                     "年級": c_row['年級'], "學期": c_row['學期'],
@@ -580,7 +587,6 @@ def create_pdf_report(dept):
             self.set_font(CHINESE_FONT, 'I', 8)
             self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
     
-    # 🔥🔥🔥 修正：直接呼叫 unified merge logic，確保與預覽/編輯一致 🔥🔥🔥
     df = get_merged_data(dept, target_semester=None, target_grade=None)
     if df.empty: return None
     
@@ -1080,7 +1086,7 @@ def main():
             
             poss = get_all_possible_classes(grade)
             
-            # --- FIX: Removed 'default' parameter ---
+            # --- FIX: Removed 'default' parameter to fix session state warning ---
             if "class_multiselect" not in st.session_state:
                 st.session_state["class_multiselect"] = st.session_state.get('active_classes', [])
 
