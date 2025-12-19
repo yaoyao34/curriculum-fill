@@ -417,7 +417,22 @@ def load_preview_data(dept):
     # 直接呼叫整合函式，不鎖定年級與學期 (全抓)
     return get_merged_data(dept, target_semester=None, target_grade=None)
 
-# --- 6. 存檔與同步 ---
+# --- 6. 輔助：取得所有課程名稱列表 ---
+# 🔥 修正：補回此函式，避免 NameError 🔥
+def get_course_list():
+    courses = set()
+    # 1. 從編輯中的 DataFrame 抓
+    if 'data' in st.session_state and not st.session_state['data'].empty:
+        if '課程名稱' in st.session_state['data'].columns:
+            courses.update(st.session_state['data']['課程名稱'].unique().tolist())
+            
+    # 2. 從 Curriculum (快取) 抓
+    if 'curr_course_options' in st.session_state:
+        courses.update(st.session_state['curr_course_options'])
+        
+    return sorted(list(courses))
+
+# --- 7. 存檔與同步 ---
 def save_single_row(row_data, original_key=None):
     client = get_connection()
     if not client: return False
@@ -577,7 +592,7 @@ def sync_history_to_db(dept, history_year):
         st.error(f"同步失敗: {e}")
         return False
 
-# --- 7. PDF 報表 ---
+# --- 8. PDF 報表 ---
 def create_pdf_report(dept):
     CHINESE_FONT = 'NotoSans' 
     current_year = st.session_state.get('current_school_year', '114')
@@ -751,7 +766,7 @@ def create_pdf_report(dept):
     pdf.ln()
     return pdf.output()
 
-# --- 8. Callbacks ---
+# --- 9. Callbacks ---
 def auto_load_data():
     dept = st.session_state.get('dept_val')
     sem = st.session_state.get('sem_val')
@@ -968,7 +983,7 @@ def on_preview_change():
             st.session_state['show_preview'] = False
             st.session_state['editor_key_counter'] += 1
 
-# --- 9. 主程式 ---
+# --- 10. 主程式 Entry ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     if not check_login(): st.stop()
@@ -1098,7 +1113,7 @@ def main():
             
             poss = get_all_possible_classes(grade)
             
-            # --- FIX: Removed 'default' parameter to fix session state warning ---
+            # --- Fix: Remove 'default' parameter ---
             if "class_multiselect" not in st.session_state:
                 st.session_state["class_multiselect"] = st.session_state.get('active_classes', [])
 
@@ -1108,7 +1123,7 @@ def main():
                 key="class_multiselect", 
                 on_change=on_multiselect_change
             )
-            # -------------------------------------------------------------------
+            # -------------------------------------
 
             inp_cls_str = ",".join(sel_cls)
 
