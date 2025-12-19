@@ -467,7 +467,12 @@ def load_preview_data(dept):
 
     if '勾選' not in df_final.columns:
         df_final.insert(0, "勾選", False)
-        
+    
+    # 🔥🔥🔥 關鍵修正：這裡也要執行跟 PDF 一模一樣的去重邏輯 🔥🔥🔥
+    if 'uuid' in df_final.columns and '填報時間' in df_final.columns:
+         df_final = df_final.sort_values(by='填報時間')
+         df_final = df_final.drop_duplicates(subset=['uuid'], keep='last')
+
     if '年級' in df_final.columns and '學期' in df_final.columns and '課程名稱' in df_final.columns:
          df_final = df_final.sort_values(by=['年級', '學期', '課程名稱'], ascending=[True, True, True]).reset_index(drop=True)
          
@@ -640,7 +645,7 @@ def sync_history_to_db(dept, history_year):
         st.error(f"同步失敗: {e}")
         return False
 
-# --- 5. PDF 報表 (修正版：防止不同班級的同名課程被吃掉) ---
+# --- 5. PDF 報表 ---
 def create_pdf_report(dept):
     CHINESE_FONT = 'NotoSans' 
     current_year = st.session_state.get('current_school_year', '114')
@@ -689,18 +694,14 @@ def create_pdf_report(dept):
         df_full = pd.DataFrame(rows, columns=new_headers)
         if df_full.empty: return None
         
-        # 確保有 uuid 欄位，若無則無法正確去重
-        if 'uuid' not in df_full.columns:
-            return None
+        # 確保有 uuid 欄位
+        if 'uuid' not in df_full.columns: return None
 
         df = df_full[df_full['科別'] == dept].copy()
         if df.empty: return None
-        
         if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
         
-        # 🔥🔥🔥 關鍵修正：改用 uuid 來去除重複 🔥🔥🔥
-        # 原本是用 ['科別', ... '課程名稱', '適用班級']，如果班級欄位有問題就會誤刪
-        # 現在改用 uuid，只要是不同列的資料都會被保留
+        # 🔥🔥🔥 關鍵修正：PDF 產生時，嚴格使用 uuid 去除重複，確保兩筆資料都會出現 🔥🔥🔥
         df = df.sort_values(by='填報時間')
         df = df.drop_duplicates(subset=['uuid'], keep='last')
         
@@ -722,8 +723,8 @@ def create_pdf_report(dept):
         col_widths[1] = 19   # 班級
         col_widths[2] = 107  # 教科書
     elif dept in ["建築科", "機械科", "製圖科", "電機科"]:
-        col_widths[1] = 67   # 班級 73-6
-        col_widths[5] = 44   # 字號 38+6
+        col_widths[1] = 67   # 班級
+        col_widths[5] = 44   # 字號
 
     LINE_HEIGHT = 5.5 
     
@@ -1285,4 +1286,5 @@ def main():
     else: st.info("👈 請先在左側選擇科別")
 
 if __name__ == "__main__": main()
+
 
