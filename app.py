@@ -92,16 +92,15 @@ def get_connection():
         except Exception: return None
     return gspread.authorize(creds)
 
-# --- NEW: 安全讀取與快取機制 (解決 429 Error) ---
+# --- 安全讀取與快取機制 ---
 def safe_get_all_values(ws):
-    """嘗試讀取資料，若遇到 429 錯誤 (流量限制) 則自動等待並重試"""
     max_retries = 5
     for i in range(max_retries):
         try:
             return ws.get_all_values()
         except Exception as e:
             if "429" in str(e) or "Quota" in str(e):
-                wait_time = (2 ** i) + 1  # 2s, 3s, 5s...
+                wait_time = (2 ** i) + 1
                 time.sleep(wait_time)
             else:
                 raise e
@@ -110,7 +109,6 @@ def safe_get_all_values(ws):
 
 @st.cache_data(ttl=3600)
 def get_cached_curriculum():
-    """快取課程資料庫，避免重複讀取"""
     client = get_connection()
     if not client: return []
     try:
@@ -127,7 +125,6 @@ def get_cloud_password():
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws = sh.worksheet("Dashboard")
-        # 使用安全讀取避免登入時卡住
         vals = safe_get_all_values(ws)
         if len(vals) > 1:
             val_year = vals[1][0] # A2
@@ -157,14 +154,13 @@ def get_history_years(current_year):
         return sorted(list(unique_years), reverse=True)
     except Exception: return []
 
-# --- 登出 ---
+# --- 登出與檢查 ---
 def logout():
     st.session_state["logged_in"] = False
     st.session_state["current_school_year"] = None
     st.query_params.clear()
     st.rerun()
     
-# --- 登入檢查 ---
 def check_login():
     if st.session_state.get("logged_in"):
         with st.sidebar:
@@ -200,294 +196,228 @@ def check_login():
             else:
                 st.error("❌ 通行碼錯誤。")
     return False
-    
-# --- 2. 資料讀取 (核心邏輯) ---
-def load_data(dept, semester, grade, history_year=None):
+
+# --- 2. 核心資料處理函式 (Data Fetching Helpers) ---
+
+def fetch_raw_dataframes():
+    """讀取 Submission, History(若需要), Curriculum 的原始資料"""
     client = get_connection()
-    if not client: return pd.DataFrame()
+    if not client: return None, None, None, None
+
     try:
         sh = client.open(SPREADSHEET_NAME)
-        ws_sub = sh.worksheet(SHEET_SUBMISSION)
         
-        # 讀取 Submission (變動資料，用 safe_get_all_values)
+        # 1. Submission
+        ws_sub = sh.worksheet(SHEET_SUBMISSION)
         sub_values = safe_get_all_values(ws_sub)
         
-        # 讀取 Curriculum (靜態資料，用 cache)
+        # 2. History (如果需要)
+        ws_hist = sh.worksheet(SHEET_HISTORY)
+        hist_values = safe_get_all_values(ws_hist)
+        
+        # 3. Curriculum (Cached)
         curr_values = get_cached_curriculum()
         
-        def get_df_from_values(data):
-            if not data: return pd.DataFrame()
-            headers = data[0]
-            rows = data[1:]
-            mapping = {
-                '教科書(1)': '教科書(優先1)', '教科書': '教科書(優先1)',
-                '字號(1)': '審定字號(1)', '字號': '審定字號(1)', '審定字號': '審定字號(1)',
-                '教科書(2)': '教科書(優先2)', '字號(2)': '審定字號(2)', '備註': '備註1'
-            }
-            new_headers = []
-            seen = {}
-            for col in headers:
-                c = str(col).strip()
-                final_name = mapping.get(c, c)
-                if final_name in seen:
-                    seen[final_name] += 1
-                    if final_name.startswith('備註'): unique_name = f"備註{seen[final_name]}"
-                    else: unique_name = f"{final_name}({seen[final_name]})"
-                    new_headers.append(unique_name)
-                else:
-                    seen[final_name] = 1
-                    if final_name == '備註': new_headers.append('備註1')
-                    else: new_headers.append(final_name)
-            return pd.DataFrame(rows, columns=new_headers)
+        return sub_values, hist_values, curr_values, sh
+    except Exception as e:
+        st.error(f"讀取失敗: {e}")
+        return None, None, None, None
 
-        df_sub = get_df_from_values(sub_values)
-        df_curr = get_df_from_values(curr_values) 
-
-        if not df_sub.empty:
-            for col in ['年級', '學期', '科別']: df_sub[col] = df_sub[col].astype(str).str.strip()
-            if 'uuid' in df_sub.columns: df_sub['uuid'] = df_sub['uuid'].astype(str).str.strip()
-        
-        category_map = {}
-        curr_course_options = []
-
-        if not df_curr.empty:
-            for col in ['年級', '學期', '科別']: df_curr[col] = df_curr[col].astype(str).str.strip()
-            target_dept_curr = df_curr[df_curr['科別'] == dept]
-            
-            for _, row in target_dept_curr.iterrows():
-                k = (row['課程名稱'], str(row['年級']), str(row['學期']))
-                category_map[k] = row['課程類別']
-            
-            mask_opts = (df_curr['科別'] == str(dept)) & (df_curr['學期'] == str(semester)) & (df_curr['年級'] == str(grade))
-            curr_course_options = df_curr[mask_opts]['課程名稱'].unique().tolist()
-        
-        st.session_state['curr_course_options'] = curr_course_options
-
-        display_rows = []
-        displayed_uuids = set()
-
-        # === 模式 A: 載入歷史資料 ===
-        if history_year:
-            ws_hist = sh.worksheet(SHEET_HISTORY)
-            hist_values = safe_get_all_values(ws_hist) # Use Safe Read
-            df_hist = get_df_from_values(hist_values)
-
-            if not df_hist.empty:
-                for col in ['年級', '學期', '科別', '學年度', 'uuid']: 
-                    if col in df_hist.columns: 
-                        df_hist[col] = df_hist[col].astype(str).str.strip()
-                
-                if '科別' not in df_hist.columns:
-                    st.error("歷史資料庫缺少'科別'欄位，無法載入。")
-                    return pd.DataFrame()
-
-                mask_hist = (df_hist['科別'] == str(dept)) & \
-                            (df_hist['學期'] == str(semester)) & \
-                            (df_hist['年級'] == str(grade))
-                
-                if '學年度' in df_hist.columns:
-                    mask_hist = mask_hist & (df_hist['學年度'] == str(history_year))
-                
-                target_hist = df_hist[mask_hist]
-
-                for _, h_row in target_hist.iterrows():
-                    h_uuid = str(h_row.get('uuid', '')).strip()
-                    if not h_uuid: h_uuid = str(uuid.uuid4())
-
-                    sub_match = pd.DataFrame()
-                    if not df_sub.empty:
-                        sub_match = df_sub[df_sub['uuid'] == h_uuid]
-                    
-                    row_data = {}
-                    if not sub_match.empty:
-                        s_row = sub_match.iloc[0]
-                        row_data = s_row.to_dict()
-                        row_data['勾選'] = False
-                    else:
-                        row_data = h_row.to_dict()
-                        row_data['uuid'] = h_uuid
-                        row_data['勾選'] = False
-                        for k, alt in {'教科書(優先1)': '教科書(1)', '審定字號(1)': '字號(1)', '審定字號(2)': '字號(2)'}.items():
-                            if alt in row_data and k not in row_data: row_data[k] = row_data[alt]
-
-                    c_name = row_data.get('課程名稱', '')
-                    map_key = (c_name, str(grade), str(semester))
-                    row_data['課程類別'] = category_map.get(map_key, "") if not row_data.get('課程類別') else row_data['課程類別']
-
-                    display_rows.append(row_data)
-                    displayed_uuids.add(h_uuid)
-
-        # === 模式 B: 預設課程表 ===
-        else:
-            if not df_curr.empty:
-                mask_curr = (df_curr['科別'] == dept) & (df_curr['學期'] == str(semester)) & (df_curr['年級'] == str(grade))
-                target_curr = df_curr[mask_curr]
-
-                for _, c_row in target_curr.iterrows():
-                    c_name = c_row['課程名稱']
-                    c_type = c_row['課程類別']
-                    default_class = c_row.get('預設適用班級') or c_row.get('適用班級', '')
-
-                    sub_matches = pd.DataFrame()
-                    found_match = False
-                    if not df_sub.empty:
-                        mask_sub = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade)) & (df_sub['課程名稱'] == c_name)
-                        sub_matches = df_sub[mask_sub]
-                    
-                    if not sub_matches.empty:
-                        for _, s_row in sub_matches.iterrows():
-                            if check_class_match(default_class, str(s_row.get('適用班級', ''))):
-                                s_uuid = str(s_row.get('uuid')).strip()
-                                if s_uuid and s_uuid not in displayed_uuids:
-                                    s_data = s_row.to_dict()
-                                    s_data['勾選'] = False
-                                    s_data['課程類別'] = c_type
-                                    display_rows.append(s_data)
-                                    displayed_uuids.add(s_uuid)
-                                found_match = True
-                    
-                    if not found_match:
-                        new_uuid = str(uuid.uuid4())
-                        display_rows.append({
-                            "勾選": False, "uuid": new_uuid,
-                            "科別": dept, "年級": grade, "學期": semester,
-                            "課程類別": c_type, "課程名稱": c_name, "適用班級": default_class,
-                            "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
-                            "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
-                            "備註1": "", "備註2": ""
-                        })
-
-        if not df_sub.empty:
-            mask_orphan = (df_sub['科別'] == dept) & (df_sub['學期'] == str(semester)) & (df_sub['年級'] == str(grade))
-            orphan_subs = df_sub[mask_orphan]
-            for _, s_row in orphan_subs.iterrows():
-                s_uuid = str(s_row.get('uuid')).strip()
-                if s_uuid and s_uuid not in displayed_uuids:
-                    s_data = s_row.to_dict()
-                    s_data['勾選'] = False
-                    s_data['課程類別'] = "自訂/新增"
-                    display_rows.append(s_data)
-                    displayed_uuids.add(s_uuid)
-
-        df_final = pd.DataFrame(display_rows)
-        if not df_final.empty:
-            required_cols = ["勾選", "課程類別", "課程名稱", "適用班級", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "備註1", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "備註2"]
-            for col in required_cols:
-                if col not in df_final.columns: df_final[col] = ""
-            if '課程類別' in df_final.columns and '課程名稱' in df_final.columns:
-                 df_final = df_final.sort_values(by=['課程類別', '課程名稱'], ascending=[False, True]).reset_index(drop=True)
-        return df_final
-
-    except Exception as e: 
-        st.error(f"讀取錯誤 (Detail): {e}")
-        return pd.DataFrame()
-
-# --- 新增功能：讀取整科的所有 Submission 資料 (供預覽用) ---
-def load_preview_data(dept):
-    client = get_connection()
-    if not client: return pd.DataFrame()
+def normalize_df(headers, rows):
+    """將原始資料轉為 DataFrame 並標準化欄位名稱"""
+    if not headers: return pd.DataFrame()
     
     mapping = {
         '教科書(1)': '教科書(優先1)', '教科書': '教科書(優先1)',
         '字號(1)': '審定字號(1)', '字號': '審定字號(1)', '審定字號': '審定字號(1)',
         '教科書(2)': '教科書(優先2)', '字號(2)': '審定字號(2)', '備註': '備註1'
     }
-
-    try:
-        sh = client.open(SPREADSHEET_NAME)
-        ws_sub = sh.worksheet(SHEET_SUBMISSION)
-        data = safe_get_all_values(ws_sub) # Safe Read
-    except:
-        return pd.DataFrame() 
-
-    df_sub = pd.DataFrame()
-    if data:
-        headers = data[0]
-        rows = data[1:]
-        new_headers = []
-        seen = {}
-        for col in headers:
-            c = str(col).strip()
-            final_name = mapping.get(c, c)
-            if final_name in seen:
-                seen[final_name] += 1
-                if final_name.startswith('備註'): unique_name = f"備註{seen[final_name]}"
-                else: unique_name = f"{final_name}({seen[final_name]})"
-                new_headers.append(unique_name)
-            else:
-                seen[final_name] = 1
-                if final_name == '備註': new_headers.append('備註1')
-                else: new_headers.append(final_name)
-        
-        df_sub = pd.DataFrame(rows, columns=new_headers)
-        if '科別' in df_sub.columns:
-            df_sub = df_sub[df_sub['科別'] == dept].copy()
+    new_headers = []
+    seen = {}
+    for col in headers:
+        c = str(col).strip()
+        final_name = mapping.get(c, c)
+        if final_name in seen:
+            seen[final_name] += 1
+            if final_name.startswith('備註'): unique_name = f"備註{seen[final_name]}"
+            else: unique_name = f"{final_name}({seen[final_name]})"
+            new_headers.append(unique_name)
+        else:
+            seen[final_name] = 1
+            if final_name == '備註': new_headers.append('備註1')
+            else: new_headers.append(final_name)
+            
+    df = pd.DataFrame(rows, columns=new_headers)
     
+    # 確保關鍵欄位為字串
+    for col in ['年級', '學期', '科別', 'uuid', '學年度', '課程名稱', '適用班級']:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+            
+    return df
+
+# --- 3. 統一資料合併邏輯 (Merge Logic) ---
+# 這是最核心的函式，PDF預覽、PDF匯出、編輯介面都共用此邏輯
+def get_merged_data(dept, target_semester=None, target_grade=None):
+    """
+    獲取整合後的資料：
+    1. 抓取 Submission。
+    2. 抓取 History (若勾選)，依照 UUID 補入 Submission 沒包含的資料。
+    3. 抓取 Curriculum，若某課程在 (Submission + History) 中完全沒出現，則補入空白行。
+    
+    參數:
+    - dept: 科別 (必要)
+    - target_semester: 若為 None，則抓取該科所有學期 (用於預覽/PDF)
+    - target_grade: 若為 None，則抓取該科所有年級 (用於預覽/PDF)
+    """
+    
+    sub_vals, hist_vals, curr_vals, _ = fetch_raw_dataframes()
+    if not sub_vals: return pd.DataFrame()
+
+    df_sub = normalize_df(sub_vals[0], sub_vals[1:])
+    df_hist = normalize_df(hist_vals[0], hist_vals[1:]) if hist_vals else pd.DataFrame()
+    df_curr = normalize_df(curr_vals[0], curr_vals[1:]) if curr_vals else pd.DataFrame()
+
+    # 1. 篩選 Submission
+    mask_sub = (df_sub['科別'] == dept)
+    if target_semester: mask_sub &= (df_sub['學期'] == str(target_semester))
+    if target_grade: mask_sub &= (df_sub['年級'] == str(target_grade))
+    final_df = df_sub[mask_sub].copy()
+    
+    if '勾選' not in final_df.columns: final_df['勾選'] = False
+    
+    # 建立已存在的 UUID 集合與課程集合 (用於判斷是否需要補資料)
+    existing_uuids = set(final_df['uuid'].tolist())
+    existing_courses = set(final_df['課程名稱'].tolist())
+
+    # 2. 處理 History (若勾選)
     use_hist = st.session_state.get('use_history_checkbox', False)
     hist_year = st.session_state.get('history_year_val')
     
     if use_hist and not hist_year:
-        curr = st.session_state.get('current_school_year', '')
-        years = get_history_years(curr)
+        # 自動選最新的歷史年份
+        curr_yr = st.session_state.get('current_school_year', '')
+        years = get_history_years(curr_yr)
         if years: hist_year = years[0]
-    
-    df_final = df_sub
-    
-    if use_hist and hist_year:
-        try:
-            ws_hist = sh.worksheet(SHEET_HISTORY)
-            data_hist = safe_get_all_values(ws_hist) # Safe Read
-            if data_hist:
-                h_headers = data_hist[0]
-                h_rows = data_hist[1:]
+
+    if use_hist and hist_year and not df_hist.empty:
+        if '科別' in df_hist.columns and '學年度' in df_hist.columns:
+            mask_hist = (df_hist['科別'] == dept) & (df_hist['學年度'] == str(hist_year))
+            if target_semester: mask_hist &= (df_hist['學期'] == str(target_semester))
+            if target_grade: mask_hist &= (df_hist['年級'] == str(target_grade))
+            
+            target_hist = df_hist[mask_hist].copy()
+            
+            for _, row in target_hist.iterrows():
+                h_uuid = row.get('uuid', '')
+                if not h_uuid: h_uuid = str(uuid.uuid4()) # 防呆
                 
-                df_hist = pd.DataFrame(h_rows, columns=h_headers)
-                df_hist.rename(columns=mapping, inplace=True)
-                
-                if '科別' in df_hist.columns and '學年度' in df_hist.columns:
-                      df_hist['科別'] = df_hist['科別'].astype(str).str.strip()
-                      df_hist['學年度'] = df_hist['學年度'].astype(str).str.strip()
-                      
-                      target_hist = df_hist[
-                        (df_hist['科別'] == str(dept).strip()) & 
-                        (df_hist['學年度'] == str(hist_year).strip())
-                      ].copy()
-                      
-                      if not target_hist.empty:
-                          existing_uuids = set(df_sub['uuid'].astype(str).str.strip()) if not df_sub.empty and 'uuid' in df_sub.columns else set()
-                          if 'uuid' in target_hist.columns:
-                            target_hist['uuid'] = target_hist['uuid'].astype(str).str.strip()
-                            target_hist = target_hist[~target_hist['uuid'].isin(existing_uuids)]
-                          
-                          df_final = pd.concat([df_sub, target_hist], ignore_index=True)
-        except Exception:
-            pass 
+                # 🔥 關鍵：只要 UUID 不在 Submission 中，就補進來 (不管課程名稱是否重複)
+                if h_uuid not in existing_uuids:
+                    row_data = row.to_dict()
+                    row_data['uuid'] = h_uuid # 確保有 UUID
+                    row_data['勾選'] = False
+                    
+                    # 欄位名稱對齊 (History 可能用舊名)
+                    for k, alt in {'教科書(優先1)': '教科書(1)', '審定字號(1)': '字號(1)', '審定字號(2)': '字號(2)'}.items():
+                        if alt in row_data and k not in row_data: row_data[k] = row_data[alt]
+                    
+                    # 補入 DataFrame
+                    final_df = pd.concat([final_df, pd.DataFrame([row_data])], ignore_index=True)
+                    existing_uuids.add(h_uuid)
+                    existing_courses.add(row.get('課程名稱', ''))
 
-    if df_final.empty: return pd.DataFrame()
+    # 3. 處理 Curriculum (補缺漏的課程)
+    if not df_curr.empty:
+        # 建立課程類別 Map (供顯示用)
+        cat_map = {}
+        mask_curr = (df_curr['科別'] == dept)
+        # 注意：Curriculum 不一定有分學年度，通常是通用的
+        if target_grade: mask_curr &= (df_curr['年級'] == str(target_grade))
+        if target_semester: mask_curr &= (df_curr['學期'] == str(target_semester))
+        
+        target_curr = df_curr[mask_curr]
+        
+        # 更新 final_df 裡的課程類別
+        for _, row in df_curr[df_curr['科別'] == dept].iterrows():
+            k = (row['課程名稱'], str(row['年級']), str(row['學期']))
+            cat_map[k] = row['課程類別']
+            
+        # 補上 final_df 缺少的類別資訊
+        for idx, row in final_df.iterrows():
+            if not row.get('課程類別'):
+                k = (row['課程名稱'], str(row['年級']), str(row['學期']))
+                final_df.at[idx, '課程類別'] = cat_map.get(k, "")
 
-    if '勾選' not in df_final.columns:
-        df_final.insert(0, "勾選", False)
+        # 檢查是否有課程完全沒被填報 (Submission + History 都沒有)
+        for _, c_row in target_curr.iterrows():
+            c_name = c_row['課程名稱']
+            
+            # 🔥 關鍵：只有當這個課程名稱「完全沒出現」在現有清單時，才加一筆空白的
+            # 如果 History 裡已經有 2 筆該課程 (不同班級)，這裡就不會動作 -> 符合需求
+            if c_name not in existing_courses:
+                new_row = {
+                    "勾選": False,
+                    "uuid": str(uuid.uuid4()),
+                    "科別": dept,
+                    "年級": c_row['年級'],
+                    "學期": c_row['學期'],
+                    "課程類別": c_row['課程類別'],
+                    "課程名稱": c_name,
+                    "適用班級": c_row.get('預設適用班級') or c_row.get('適用班級', ''),
+                    "教科書(優先1)": "", "冊次(1)": "", "出版社(1)": "", "審定字號(1)": "",
+                    "教科書(優先2)": "", "冊次(2)": "", "出版社(2)": "", "審定字號(2)": "",
+                    "備註1": "", "備註2": ""
+                }
+                final_df = pd.concat([final_df, pd.DataFrame([new_row])], ignore_index=True)
+                # 這裡不用加到 existing_courses，因為迴圈繼續跑也不會重複加同名的
+
+    # 4. 補上自訂課程 (Orphan Submission) - 其實 Step 1 已經全抓了，這裡只是過濾
+    # Step 1 抓的是所有符合條件的 Submission，所以自訂課程已經在裡面了。
     
-    # 🔥🔥🔥 關鍵修正：這裡也要執行跟 PDF 一模一樣的去重邏輯 🔥🔥🔥
-    if 'uuid' in df_final.columns and '填報時間' in df_final.columns:
-         df_final = df_final.sort_values(by='填報時間')
-         df_final = df_final.drop_duplicates(subset=['uuid'], keep='last')
+    # 5. 整理與排序
+    required_cols = ["勾選", "課程類別", "課程名稱", "適用班級", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "備註1", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "備註2"]
+    for col in required_cols:
+        if col not in final_df.columns: final_df[col] = ""
+        
+    if not final_df.empty:
+        # 排序：年級 -> 學期 -> 類別 -> 名稱
+        sort_cols = []
+        ascending = []
+        if '年級' in final_df.columns: 
+            sort_cols.append('年級'); ascending.append(True)
+        if '學期' in final_df.columns:
+            sort_cols.append('學期'); ascending.append(True)
+        if '課程類別' in final_df.columns:
+            sort_cols.append('課程類別'); ascending.append(False) # 必修在前
+        if '課程名稱' in final_df.columns:
+            sort_cols.append('課程名稱'); ascending.append(True)
+            
+        final_df = final_df.sort_values(by=sort_cols, ascending=ascending).reset_index(drop=True)
 
-    if '年級' in df_final.columns and '學期' in df_final.columns and '課程名稱' in df_final.columns:
-         df_final = df_final.sort_values(by=['年級', '學期', '課程名稱'], ascending=[True, True, True]).reset_index(drop=True)
-         
-    return df_final
+    return final_df
 
-def get_course_list():
-    courses = set()
-    if 'data' in st.session_state and not st.session_state['data'].empty:
-        if '課程名稱' in st.session_state['data'].columns:
-            courses.update(st.session_state['data']['課程名稱'].unique().tolist())
-    if 'curr_course_options' in st.session_state:
-        courses.update(st.session_state['curr_course_options'])
-    return sorted(list(courses))
+# --- 4. 應用層：載入資料 (Editor View) ---
+def load_data(dept, semester, grade, history_year=None):
+    # 直接呼叫整合函式，鎖定年級與學期
+    df = get_merged_data(dept, target_semester=semester, target_grade=grade)
+    
+    # 用於下拉選單的課程列表 (從 Curriculum 抓)
+    curr_vals = get_cached_curriculum()
+    if curr_vals:
+        df_curr = normalize_df(curr_vals[0], curr_vals[1:])
+        mask = (df_curr['科別'] == str(dept)) & (df_curr['學期'] == str(semester)) & (df_curr['年級'] == str(grade))
+        opts = df_curr[mask]['課程名稱'].unique().tolist()
+        st.session_state['curr_course_options'] = opts
+    
+    return df
 
-# --- 4. 存檔 ---
+# --- 5. 應用層：預覽資料 (Preview View) ---
+def load_preview_data(dept):
+    # 直接呼叫整合函式，不鎖定年級與學期 (全抓)
+    return get_merged_data(dept, target_semester=None, target_grade=None)
+
+# --- 6. 存檔與同步 ---
 def save_single_row(row_data, original_key=None):
     client = get_connection()
     if not client: return False
@@ -498,18 +428,18 @@ def save_single_row(row_data, original_key=None):
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
         ws_sub.append_row(["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"])
 
-    all_values = safe_get_all_values(ws_sub) # Safe Read
+    all_values = safe_get_all_values(ws_sub)
+    FULL_HEADERS = ["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
+
     if not all_values:
-        headers = ["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
-        ws_sub.append_row(headers)
-        all_values = [headers]
+        ws_sub.append_row(FULL_HEADERS)
+        all_values = [FULL_HEADERS]
     
     headers = all_values[0]
-    if "uuid" not in headers:
-        ws_sub.clear() 
-        headers = ["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
-        ws_sub.append_row(headers)
-        all_values = [headers]
+    if "教科書(2)" not in headers or "備註2" not in headers:
+        ws_sub.update(range_name="A1", values=[FULL_HEADERS])
+        headers = FULL_HEADERS
+        all_values[0] = FULL_HEADERS
 
     col_map = {h: i for i, h in enumerate(headers)}
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -555,7 +485,7 @@ def delete_row_from_db(target_uuid):
     if not client: return False
     try: ws_sub = client.open(SPREADSHEET_NAME).worksheet(SHEET_SUBMISSION)
     except: return False
-    all_values = safe_get_all_values(ws_sub) # Safe Read
+    all_values = safe_get_all_values(ws_sub)
     if not all_values: return False
     headers = all_values[0]
     if "uuid" not in headers: return False 
@@ -570,7 +500,6 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# --- 4.6 同步歷史資料到 Submission ---
 def sync_history_to_db(dept, history_year):
     client = get_connection()
     if not client: return False
@@ -583,18 +512,21 @@ def sync_history_to_db(dept, history_year):
         current_school_year = st.session_state.get("current_school_year", "")
         if not history_year: return True
 
-        data_sub = safe_get_all_values(ws_sub) # Safe Read
+        data_sub = safe_get_all_values(ws_sub)
+        FULL_HEADERS = ["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
+
         if data_sub:
-             df_sub = pd.DataFrame(data_sub[1:], columns=data_sub[0])
+             sub_headers = data_sub[0]
+             if "教科書(2)" not in sub_headers or "備註2" not in sub_headers:
+                 ws_sub.update(range_name="A1", values=[FULL_HEADERS])
+                 sub_headers = FULL_HEADERS
+             df_sub = pd.DataFrame(data_sub[1:], columns=sub_headers if len(data_sub)>0 else None)
         else:
+             ws_sub.append_row(FULL_HEADERS)
+             sub_headers = FULL_HEADERS
              df_sub = pd.DataFrame()
 
         existing_uuids = set(df_sub['uuid'].astype(str).str.strip().tolist()) if not df_sub.empty and 'uuid' in df_sub.columns else set()
-
-        sub_headers = ws_sub.row_values(1)
-        if not sub_headers:
-            sub_headers = ["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
-            ws_sub.append_row(sub_headers)
 
         data_hist = ws_hist.get_all_records()
         df_hist = pd.DataFrame(data_hist)
@@ -645,7 +577,7 @@ def sync_history_to_db(dept, history_year):
         st.error(f"同步失敗: {e}")
         return False
 
-# --- 5. PDF 報表 ---
+# --- 7. PDF 報表 ---
 def create_pdf_report(dept):
     CHINESE_FONT = 'NotoSans' 
     current_year = st.session_state.get('current_school_year', '114')
@@ -664,49 +596,15 @@ def create_pdf_report(dept):
             self.set_y(-15)
             self.set_font(CHINESE_FONT, 'I', 8)
             self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
-            
-    client = get_connection()
-    if not client: return None
-    try:
-        sh = client.open(SPREADSHEET_NAME)
-        ws_sub = sh.worksheet(SHEET_SUBMISSION)
-        data = safe_get_all_values(ws_sub) # Safe Read
-        if not data: return None
-        headers = data[0]
-        rows = data[1:]
-        seen = {}
-        new_headers = []
-        for col in headers:
-            c = str(col).strip()
-            if c in seen:
-                seen[c] += 1
-                new_name = f"{c}({seen[c]})"
-                if c.startswith('教科書'): new_name = f"教科書(優先{seen[c]})"
-                elif c.startswith('備註'): new_name = c
-                new_headers.append(new_name)
-            else:
-                seen[c] = 1
-                if c == '教科書(1)': new_headers.append('教科書(優先1)')
-                elif c == '教科書': new_headers.append('教科書(優先1)')
-                elif c.startswith('備註'): new_headers.append(c)
-                else: new_headers.append(c)
-        
-        df_full = pd.DataFrame(rows, columns=new_headers)
-        if df_full.empty: return None
-        
-        # 確保有 uuid 欄位
-        if 'uuid' not in df_full.columns: return None
-
-        df = df_full[df_full['科別'] == dept].copy()
-        if df.empty: return None
-        if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
-        
-        # 🔥🔥🔥 關鍵修正：PDF 產生時，嚴格使用 uuid 去除重複，確保兩筆資料都會出現 🔥🔥🔥
-        df = df.sort_values(by='填報時間')
-        df = df.drop_duplicates(subset=['uuid'], keep='last')
-        
-    except Exception: return None
-        
+    
+    # 直接使用統一的資料讀取邏輯
+    df = get_merged_data(dept, target_semester=None, target_grade=None)
+    if df.empty: return None
+    
+    # 確保不會誤刪：PDF 嚴格依照 UUID 去重，保留不同班級/不同UUID的資料
+    df = df.sort_values(by='填報時間', ascending=True)
+    df = df.drop_duplicates(subset=['uuid'], keep='last')
+    
     pdf = PDF(orientation='L', unit='mm', format='A4') 
     pdf.set_auto_page_break(auto=True, margin=15)
     try:
@@ -723,8 +621,8 @@ def create_pdf_report(dept):
         col_widths[1] = 19   # 班級
         col_widths[2] = 107  # 教科書
     elif dept in ["建築科", "機械科", "製圖科", "電機科"]:
-        col_widths[1] = 67   # 班級
-        col_widths[5] = 44   # 字號
+        col_widths[1] = 67   # 班級 73-6
+        col_widths[5] = 44   # 字號 38+6
 
     LINE_HEIGHT = 5.5 
     
@@ -853,7 +751,7 @@ def create_pdf_report(dept):
     pdf.ln()
     return pdf.output()
 
-# --- 7. Callbacks ---
+# --- 8. Callbacks ---
 def auto_load_data():
     dept = st.session_state.get('dept_val')
     sem = st.session_state.get('sem_val')
@@ -953,7 +851,6 @@ def on_editor_change():
         elif changes.get("勾選") is False:
             found_false_idx = int(idx_str)
             
-    # 狀況 A: 新增勾選 (優先處理)
     if found_true_idx is not None:
         current_idx = st.session_state.get('edit_index')
         if current_idx is not None and current_idx != found_true_idx:
@@ -990,7 +887,6 @@ def on_editor_change():
         st.session_state['editor_key_counter'] += 1
         return
 
-    # 狀況 B: 取消勾選
     if found_false_idx is not None:
         st.session_state['data'].at[found_false_idx, "勾選"] = False
         st.session_state['edit_index'] = None
@@ -1072,7 +968,7 @@ def on_preview_change():
             st.session_state['show_preview'] = False
             st.session_state['editor_key_counter'] += 1
 
-# --- 8. 主程式 ---
+# --- 9. 主程式 ---
 def main():
     st.set_page_config(page_title="教科書填報系統", layout="wide")
     if not check_login(): st.stop()
@@ -1286,5 +1182,3 @@ def main():
     else: st.info("👈 請先在左側選擇科別")
 
 if __name__ == "__main__": main()
-
-
