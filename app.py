@@ -7,6 +7,7 @@ import json
 import base64
 import uuid
 import math
+import time
 
 # --- NEW: Import FPDF and Enums for PDF generation ---
 from fpdf import FPDF
@@ -91,6 +92,33 @@ def get_connection():
         except Exception: return None
     return gspread.authorize(creds)
 
+# --- NEW: 安全讀取與快取機制 (解決 429 Error) ---
+def safe_get_all_values(ws):
+    """嘗試讀取資料，若遇到 429 錯誤 (流量限制) 則自動等待並重試"""
+    max_retries = 5
+    for i in range(max_retries):
+        try:
+            return ws.get_all_values()
+        except Exception as e:
+            if "429" in str(e) or "Quota" in str(e):
+                wait_time = (2 ** i) + 1  # 2s, 3s, 5s...
+                time.sleep(wait_time)
+            else:
+                raise e
+    st.error("系統忙碌 (Google API 流量超載)，請稍後再試。")
+    return []
+
+@st.cache_data(ttl=3600)
+def get_cached_curriculum():
+    """快取課程資料庫，避免重複讀取"""
+    client = get_connection()
+    if not client: return []
+    try:
+        sh = client.open(SPREADSHEET_NAME)
+        ws_curr = sh.worksheet(SHEET_CURRICULUM)
+        return safe_get_all_values(ws_curr)
+    except Exception: return []
+
 # --- 讀取雲端密碼 ---
 @st.cache_data(ttl=600)
 def get_cloud_password():
@@ -99,9 +127,13 @@ def get_cloud_password():
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws = sh.worksheet("Dashboard")
-        val_year = ws.cell(2, 1).value
-        val_pwd = ws.cell(2, 2).value
-        return str(val_pwd).strip(), str(val_year).strip()
+        # 使用安全讀取避免登入時卡住
+        vals = safe_get_all_values(ws)
+        if len(vals) > 1:
+            val_year = vals[1][0] # A2
+            val_pwd = vals[1][1]  # B2
+            return str(val_pwd).strip(), str(val_year).strip()
+        return None, None
     except Exception: return None, None
 
 # --- 取得可用的歷史學年度 ---
@@ -112,7 +144,7 @@ def get_history_years(current_year):
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws_hist = sh.worksheet(SHEET_HISTORY)
-        data = ws_hist.get_all_values()
+        data = safe_get_all_values(ws_hist)
         if not data or len(data) < 2: return []
         headers = data[0]
         if "學年度" not in headers: return []
@@ -149,7 +181,7 @@ def check_login():
     params = st.query_params
     url_token = params.get("access_token", None)
 
-    if url_token and url_token == cloud_pwd:
+    if url_token and cloud_pwd and url_token == cloud_pwd:
         st.session_state["logged_in"] = True
         st.session_state["current_school_year"] = cloud_year
         st.rerun()
@@ -169,17 +201,21 @@ def check_login():
                 st.error("❌ 通行碼錯誤。")
     return False
     
-# --- 2. 資料讀取 ---
+# --- 2. 資料讀取 (核心邏輯) ---
 def load_data(dept, semester, grade, history_year=None):
     client = get_connection()
     if not client: return pd.DataFrame()
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
-        ws_curr = sh.worksheet(SHEET_CURRICULUM) 
         
-        def get_df(ws):
-            data = ws.get_all_values()
+        # 讀取 Submission (變動資料，用 safe_get_all_values)
+        sub_values = safe_get_all_values(ws_sub)
+        
+        # 讀取 Curriculum (靜態資料，用 cache)
+        curr_values = get_cached_curriculum()
+        
+        def get_df_from_values(data):
             if not data: return pd.DataFrame()
             headers = data[0]
             rows = data[1:]
@@ -204,12 +240,11 @@ def load_data(dept, semester, grade, history_year=None):
                     else: new_headers.append(final_name)
             return pd.DataFrame(rows, columns=new_headers)
 
-        df_sub = get_df(ws_sub)
-        df_curr = get_df(ws_curr) 
+        df_sub = get_df_from_values(sub_values)
+        df_curr = get_df_from_values(curr_values) 
 
         if not df_sub.empty:
             for col in ['年級', '學期', '科別']: df_sub[col] = df_sub[col].astype(str).str.strip()
-            # 🔥 確保 UUID 清淨
             if 'uuid' in df_sub.columns: df_sub['uuid'] = df_sub['uuid'].astype(str).str.strip()
         
         category_map = {}
@@ -234,7 +269,9 @@ def load_data(dept, semester, grade, history_year=None):
         # === 模式 A: 載入歷史資料 ===
         if history_year:
             ws_hist = sh.worksheet(SHEET_HISTORY)
-            df_hist = get_df(ws_hist)
+            hist_values = safe_get_all_values(ws_hist) # Use Safe Read
+            df_hist = get_df_from_values(hist_values)
+
             if not df_hist.empty:
                 for col in ['年級', '學期', '科別', '學年度', 'uuid']: 
                     if col in df_hist.columns: 
@@ -359,7 +396,7 @@ def load_preview_data(dept):
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
-        data = ws_sub.get_all_values()
+        data = safe_get_all_values(ws_sub) # Safe Read
     except:
         return pd.DataFrame() 
 
@@ -399,7 +436,7 @@ def load_preview_data(dept):
     if use_hist and hist_year:
         try:
             ws_hist = sh.worksheet(SHEET_HISTORY)
-            data_hist = ws_hist.get_all_values()
+            data_hist = safe_get_all_values(ws_hist) # Safe Read
             if data_hist:
                 h_headers = data_hist[0]
                 h_rows = data_hist[1:]
@@ -408,21 +445,21 @@ def load_preview_data(dept):
                 df_hist.rename(columns=mapping, inplace=True)
                 
                 if '科別' in df_hist.columns and '學年度' in df_hist.columns:
-                     df_hist['科別'] = df_hist['科別'].astype(str).str.strip()
-                     df_hist['學年度'] = df_hist['學年度'].astype(str).str.strip()
-                     
-                     target_hist = df_hist[
+                      df_hist['科別'] = df_hist['科別'].astype(str).str.strip()
+                      df_hist['學年度'] = df_hist['學年度'].astype(str).str.strip()
+                      
+                      target_hist = df_hist[
                         (df_hist['科別'] == str(dept).strip()) & 
                         (df_hist['學年度'] == str(hist_year).strip())
-                     ].copy()
-                     
-                     if not target_hist.empty:
-                         existing_uuids = set(df_sub['uuid'].astype(str).str.strip()) if not df_sub.empty and 'uuid' in df_sub.columns else set()
-                         if 'uuid' in target_hist.columns:
+                      ].copy()
+                      
+                      if not target_hist.empty:
+                          existing_uuids = set(df_sub['uuid'].astype(str).str.strip()) if not df_sub.empty and 'uuid' in df_sub.columns else set()
+                          if 'uuid' in target_hist.columns:
                             target_hist['uuid'] = target_hist['uuid'].astype(str).str.strip()
                             target_hist = target_hist[~target_hist['uuid'].isin(existing_uuids)]
-                         
-                         df_final = pd.concat([df_sub, target_hist], ignore_index=True)
+                          
+                          df_final = pd.concat([df_sub, target_hist], ignore_index=True)
         except Exception:
             pass 
 
@@ -456,7 +493,7 @@ def save_single_row(row_data, original_key=None):
         ws_sub = sh.add_worksheet(title=SHEET_SUBMISSION, rows=1000, cols=20)
         ws_sub.append_row(["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"])
 
-    all_values = ws_sub.get_all_values()
+    all_values = safe_get_all_values(ws_sub) # Safe Read
     if not all_values:
         headers = ["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
         ws_sub.append_row(headers)
@@ -513,7 +550,7 @@ def delete_row_from_db(target_uuid):
     if not client: return False
     try: ws_sub = client.open(SPREADSHEET_NAME).worksheet(SHEET_SUBMISSION)
     except: return False
-    all_values = ws_sub.get_all_values()
+    all_values = safe_get_all_values(ws_sub) # Safe Read
     if not all_values: return False
     headers = all_values[0]
     if "uuid" not in headers: return False 
@@ -541,9 +578,13 @@ def sync_history_to_db(dept, history_year):
         current_school_year = st.session_state.get("current_school_year", "")
         if not history_year: return True
 
-        data_sub = ws_sub.get_all_records()
-        df_sub = pd.DataFrame(data_sub)
-        existing_uuids = set(df_sub['uuid'].astype(str).str.strip().tolist()) if not df_sub.empty else set()
+        data_sub = safe_get_all_values(ws_sub) # Safe Read
+        if data_sub:
+             df_sub = pd.DataFrame(data_sub[1:], columns=data_sub[0])
+        else:
+             df_sub = pd.DataFrame()
+
+        existing_uuids = set(df_sub['uuid'].astype(str).str.strip().tolist()) if not df_sub.empty and 'uuid' in df_sub.columns else set()
 
         sub_headers = ws_sub.row_values(1)
         if not sub_headers:
@@ -624,7 +665,7 @@ def create_pdf_report(dept):
     try:
         sh = client.open(SPREADSHEET_NAME)
         ws_sub = sh.worksheet(SHEET_SUBMISSION)
-        data = ws_sub.get_all_values()
+        data = safe_get_all_values(ws_sub) # Safe Read
         if not data: return None
         headers = data[0]
         rows = data[1:]
@@ -887,8 +928,6 @@ def on_editor_change():
     if key not in st.session_state: return
     edits = st.session_state[key]["edited_rows"]
     
-    # 策略：直接掃描所有編輯紀錄，只要有 False 就重置，只要有 True 就設定
-    
     found_true_idx = None
     found_false_idx = None
     
@@ -900,7 +939,6 @@ def on_editor_change():
             
     # 狀況 A: 新增勾選 (優先處理)
     if found_true_idx is not None:
-        # 如果之前有勾選別的，先把它取消掉 (單選邏輯)
         current_idx = st.session_state.get('edit_index')
         if current_idx is not None and current_idx != found_true_idx:
             st.session_state['data'].at[current_idx, "勾選"] = False
@@ -933,11 +971,10 @@ def on_editor_change():
             st.session_state[k] = bool(tgts and set(tgts).intersection(cls_set))
         st.session_state['cb_all'] = all([st.session_state['cb_reg'], st.session_state['cb_prac'], st.session_state['cb_coop']])
         
-        # 強制刷新，確保單選效果
         st.session_state['editor_key_counter'] += 1
         return
 
-    # 狀況 B: 取消勾選 (如果沒有任何 True，但有 False)
+    # 狀況 B: 取消勾選
     if found_false_idx is not None:
         st.session_state['data'].at[found_false_idx, "勾選"] = False
         st.session_state['edit_index'] = None
@@ -947,7 +984,6 @@ def on_editor_change():
         st.session_state['form_data'].update({'vol1':'全', 'vol2':'全'})
         st.session_state['active_classes'] = []
         st.session_state['class_multiselect'] = []
-        # 🔥 關鍵：強制刷新介面，防止狀態殘留
         st.session_state['editor_key_counter'] += 1
         return
 
@@ -1005,7 +1041,6 @@ def on_preview_change():
             
             cls_list = [c.strip() for c in str(row_data.get("適用班級", "")).replace("，", ",").split(",") if c.strip()]
             
-            # 🔥 關鍵修正：這裡手動設定班級與 Checkbox 狀態，絕不能呼叫 update_class_list_from_checkboxes
             st.session_state['original_classes'] = cls_list
             st.session_state['active_classes'] = cls_list
             st.session_state['class_multiselect'] = cls_list
@@ -1013,7 +1048,6 @@ def on_preview_change():
             dept, grade = st.session_state.get('dept_val'), st.session_state.get('grade_val')
             cls_set = set(cls_list)
             
-            # 手動反推 Checkbox 狀態
             for k, sys in [('cb_reg','普通科'), ('cb_prac','實用技能班'), ('cb_coop','建教班')]:
                 tgts = get_target_classes_for_dept(dept, grade, sys)
                 st.session_state[k] = bool(tgts and set(tgts).intersection(cls_set))
@@ -1151,8 +1185,19 @@ def main():
             c3.checkbox("建教", key="cb_coop", on_change=update_class_list_from_checkboxes)
             
             poss = get_all_possible_classes(grade)
-            #sel_cls = st.multiselect("最終班級列表:", options=sorted(list(set(poss + st.session_state['active_classes']))), default=st.session_state['active_classes'], key="class_multiselect", on_change=on_multiselect_change)
-            sel_cls = st.multiselect("最終班級列表:", options=sorted(list(set(poss + st.session_state['active_classes']))), key="class_multiselect", on_change=on_multiselect_change)
+            
+            # --- FIX: Removed 'default' parameter to fix session state warning ---
+            if "class_multiselect" not in st.session_state:
+                st.session_state["class_multiselect"] = st.session_state.get('active_classes', [])
+
+            sel_cls = st.multiselect(
+                "最終班級列表:", 
+                options=sorted(list(set(poss + st.session_state['active_classes']))), 
+                key="class_multiselect", 
+                on_change=on_multiselect_change
+            )
+            # -------------------------------------------------------------------
+
             inp_cls_str = ",".join(sel_cls)
 
             st.markdown("**第一優先**")
