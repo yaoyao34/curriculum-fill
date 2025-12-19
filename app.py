@@ -640,7 +640,7 @@ def sync_history_to_db(dept, history_year):
         st.error(f"同步失敗: {e}")
         return False
 
-# --- 5. PDF 報表 ---
+# --- 5. PDF 報表 (修正版：防止不同班級的同名課程被吃掉) ---
 def create_pdf_report(dept):
     CHINESE_FONT = 'NotoSans' 
     current_year = st.session_state.get('current_school_year', '114')
@@ -688,10 +688,22 @@ def create_pdf_report(dept):
         
         df_full = pd.DataFrame(rows, columns=new_headers)
         if df_full.empty: return None
+        
+        # 確保有 uuid 欄位，若無則無法正確去重
+        if 'uuid' not in df_full.columns:
+            return None
+
         df = df_full[df_full['科別'] == dept].copy()
         if df.empty: return None
+        
         if '學期' in df.columns: df['學期'] = df['學期'].astype(str)
-        df = df.sort_values(by='填報時間').drop_duplicates(subset=['科別', '年級', '學期', '課程名稱', '適用班級'], keep='last')
+        
+        # 🔥🔥🔥 關鍵修正：改用 uuid 來去除重複 🔥🔥🔥
+        # 原本是用 ['科別', ... '課程名稱', '適用班級']，如果班級欄位有問題就會誤刪
+        # 現在改用 uuid，只要是不同列的資料都會被保留
+        df = df.sort_values(by='填報時間')
+        df = df.drop_duplicates(subset=['uuid'], keep='last')
+        
     except Exception: return None
         
     pdf = PDF(orientation='L', unit='mm', format='A4') 
@@ -1273,3 +1285,4 @@ def main():
     else: st.info("👈 請先在左側選擇科別")
 
 if __name__ == "__main__": main()
+
