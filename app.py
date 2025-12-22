@@ -142,7 +142,7 @@ def get_history_years(current_year):
         ws_hist = sh.worksheet(SHEET_HISTORY)
         data = safe_get_all_values(ws_hist)
         if not data or len(data) < 2: return []
-        headers = [str(h).strip() for h in data[0]] # Clean headers
+        headers = [str(h).strip() for h in data[0]]
         
         if "學年度" not in headers: return []
         year_idx = headers.index("學年度")
@@ -227,7 +227,7 @@ def fetch_raw_dataframes():
 def normalize_df(headers, rows):
     """
     將原始資料轉為 DataFrame 並標準化欄位名稱
-    🔥 修正：強制去空白、修正 UUID 大小寫，確保欄位對齊
+    🔥 修正：嚴格檢查欄位名稱重複，防止 'uuid' 與 'UUID' 導致崩潰
     """
     if not headers: return pd.DataFrame()
     
@@ -239,26 +239,38 @@ def normalize_df(headers, rows):
     
     new_headers = []
     seen = {}
+    
     for col in headers:
-        # 🔥 強制去除標題前後空白
         c = str(col).strip()
         
+        # 統一將所有形式的 uuid 轉為小寫 'uuid'
         if c.lower() == 'uuid':
-            new_headers.append('uuid')
-            continue
+            final_name = 'uuid'
+        else:
+            final_name = mapping.get(c, c)
             
-        final_name = mapping.get(c, c)
+        # 檢查重複：如果 'uuid' 已經出現過，就改名為 'uuid_2'，避免 Streamlit 報錯
         if final_name in seen:
             seen[final_name] += 1
-            if final_name.startswith('備註'): unique_name = f"備註{seen[final_name]}"
-            else: unique_name = f"{final_name}({seen[final_name]})"
+            if final_name == 'uuid':
+                unique_name = f"uuid_{seen[final_name]}" # 避免兩個 'uuid' 欄位
+            elif final_name.startswith('備註'): 
+                unique_name = f"備註{seen[final_name]}"
+            else: 
+                unique_name = f"{final_name}({seen[final_name]})"
             new_headers.append(unique_name)
         else:
             seen[final_name] = 1
-            if final_name == '備註': new_headers.append('備註1')
-            else: new_headers.append(final_name)
+            if final_name == '備註': 
+                new_headers.append('備註1')
+            else: 
+                new_headers.append(final_name)
             
     df = pd.DataFrame(rows, columns=new_headers)
+    
+    # 確保資料中只有一個有效的 uuid 欄位 (移除重複讀取到的 uuid_2 等)
+    cols_to_keep = [c for c in df.columns if not c.startswith('uuid_')]
+    df = df[cols_to_keep]
     
     # 確保關鍵欄位為字串且去空白
     for col in ['年級', '學期', '科別', 'uuid', '學年度', '課程名稱', '適用班級']:
@@ -347,9 +359,8 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
                 }
                 final_df = pd.concat([final_df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # --- 4. 統一對映課程類別 (修正版：加入班級比對) ---
+    # --- 4. 統一對映課程類別 ---
     if not df_curr.empty:
-        # 建立詳細對照表：Key=(課名,年,期) -> List of {cat:類別, classes:班級Set}
         complex_map = {}
         target_curr_rows = df_curr[df_curr['科別'] == dept]
         
@@ -358,7 +369,6 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
             cat = row['課程類別']
             cls_str = row.get('預設適用班級') or row.get('適用班級', '')
             cls_set = parse_classes(cls_str)
-            
             if k not in complex_map: complex_map[k] = []
             complex_map[k].append({'cat': cat, 'classes': cls_set})
             
@@ -368,17 +378,14 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
             
             if k in complex_map:
                 candidates = complex_map[k]
-                found_cat = candidates[0]['cat'] # 預設取第一個
-                
-                # 嘗試找到有交集的班級設定
+                found_cat = candidates[0]['cat']
                 for cand in candidates:
                     if not row_classes.isdisjoint(cand['classes']):
                         found_cat = cand['cat']
                         break
-                
                 final_df.at[idx, '課程類別'] = found_cat
 
-    # --- 5. 整理與排序 (強制正確順序) ---
+    # --- 5. 整理與排序 ---
     required_cols = ["勾選", "課程類別", "課程名稱", "適用班級", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "備註1", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "備註2"]
     for col in required_cols:
         if col not in final_df.columns: final_df[col] = ""
@@ -386,21 +393,29 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
     if not final_df.empty:
         sort_cols = []
         ascending = []
-        # 強制指定排序依據，確保邏輯正確
         if '年級' in final_df.columns: sort_cols.append('年級'); ascending.append(True)
         if '學期' in final_df.columns: sort_cols.append('學期'); ascending.append(True)
         if '課程類別' in final_df.columns: sort_cols.append('課程類別'); ascending.append(False)
         if '課程名稱' in final_df.columns: sort_cols.append('課程名稱'); ascending.append(True)
         final_df = final_df.sort_values(by=sort_cols, ascending=ascending).reset_index(drop=True)
     
-    # 🔥 關鍵：強制輸出欄位順序，解決視覺上的順序錯亂
-    final_cols = [c for c in final_df.columns if c not in required_cols and c != 'uuid'] 
-    # 把 required_cols 放在最前面，且依照特定順序
-    output_order = ['勾選', 'uuid', '科別', '年級', '學期'] + [c for c in required_cols if c not in ['勾選']] + final_cols
+    # 強制去重欄位：只選取真正需要的欄位，避免因為 normalize_df 之前的錯誤導致有重複欄位遺留
+    # 並確保 'uuid' 只有一個
+    output_order = ['勾選', 'uuid', '科別', '年級', '學期'] + [c for c in required_cols if c not in ['勾選']]
     
-    # 只選取存在的欄位
+    # 把其他沒在 required_cols 的欄位也加回來 (但排除重複)
+    existing_cols = list(final_df.columns)
+    for c in existing_cols:
+        if c not in output_order and c != 'uuid':
+            output_order.append(c)
+            
     valid_cols = [c for c in output_order if c in final_df.columns]
-    final_df = final_df[valid_cols]
+    
+    # 🔥 最終手段：確保 columns 是唯一的，如果還有重複，drop_duplicates
+    final_df = final_df.loc[:, ~final_df.columns.duplicated()]
+    
+    # 按照順序重排 (只取存在的)
+    final_df = final_df.reindex(columns=[c for c in valid_cols if c in final_df.columns])
 
     return final_df
 
@@ -520,7 +535,6 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
-# 🔥 補回 sync_history_to_db，供 PDF 產生前調用
 def sync_history_to_db(dept, history_year):
     client = get_connection()
     if not client: return False
@@ -571,7 +585,6 @@ def sync_history_to_db(dept, history_year):
         rows_to_append = []
         for _, row in target_rows.iterrows():
             h_uuid = str(row.get('uuid', '')).strip()
-            # 只有當 UUID 不在 Submission 時才寫入
             if h_uuid in existing_uuids: continue 
 
             def get_val(keys):
