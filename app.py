@@ -324,7 +324,7 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
                     temp_hist_uuids.add(h_uuid)
                     existing_courses.add(row.get('課程名稱', ''))
 
-    # --- 3. 處理 Curriculum ---
+    # --- 3. 處理 Curriculum (補空行) ---
     if pad_curriculum and not df_curr.empty:
         mask_curr = (df_curr['科別'] == dept)
         if target_grade: mask_curr &= (df_curr['年級'] == str(target_grade))
@@ -345,17 +345,39 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
                 }
                 final_df = pd.concat([final_df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # --- 4. 統一對映課程類別 ---
+    # --- 4. 統一對映課程類別 (修正版：加入班級比對) ---
+    # 原因：同一門課在同一年級學期，對應不同班級可能有不同類別 (部定/校定)
     if not df_curr.empty:
-        cat_map = {}
-        for _, row in df_curr[df_curr['科別'] == dept].iterrows():
+        # 建立詳細對照表：Key=(課名,年,期) -> List of {cat:類別, classes:班級Set}
+        complex_map = {}
+        target_curr_rows = df_curr[df_curr['科別'] == dept]
+        
+        for _, row in target_curr_rows.iterrows():
             k = (row['課程名稱'], str(row['年級']), str(row['學期']))
-            cat_map[k] = row['課程類別']
+            cat = row['課程類別']
+            cls_str = row.get('預設適用班級') or row.get('適用班級', '')
+            cls_set = parse_classes(cls_str)
+            
+            if k not in complex_map: complex_map[k] = []
+            complex_map[k].append({'cat': cat, 'classes': cls_set})
             
         for idx, row in final_df.iterrows():
             k = (row['課程名稱'], str(row['年級']), str(row['學期']))
-            if k in cat_map:
-                final_df.at[idx, '課程類別'] = cat_map[k]
+            row_classes = parse_classes(row['適用班級'])
+            
+            if k in complex_map:
+                candidates = complex_map[k]
+                # 預設取第一個，以免完全對不到時開天窗
+                found_cat = candidates[0]['cat']
+                
+                # 嘗試找到有交集的班級設定
+                for cand in candidates:
+                    # 如果 Submission 的班級 與 Curriculum 的班級設定 有交集
+                    if not row_classes.isdisjoint(cand['classes']):
+                        found_cat = cand['cat']
+                        break
+                
+                final_df.at[idx, '課程類別'] = found_cat
 
     # --- 5. 整理與排序 ---
     required_cols = ["勾選", "課程類別", "課程名稱", "適用班級", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "備註1", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "備註2"]
