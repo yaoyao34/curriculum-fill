@@ -249,11 +249,11 @@ def normalize_df(headers, rows):
         else:
             final_name = mapping.get(c, c)
             
-        # 檢查重複：如果 'uuid' 已經出現過，就改名為 'uuid_2'，避免 Streamlit 報錯
+        # 檢查重複
         if final_name in seen:
             seen[final_name] += 1
             if final_name == 'uuid':
-                unique_name = f"uuid_{seen[final_name]}" # 避免兩個 'uuid' 欄位
+                unique_name = f"uuid_{seen[final_name]}" 
             elif final_name.startswith('備註'): 
                 unique_name = f"備註{seen[final_name]}"
             else: 
@@ -268,7 +268,7 @@ def normalize_df(headers, rows):
             
     df = pd.DataFrame(rows, columns=new_headers)
     
-    # 確保資料中只有一個有效的 uuid 欄位 (移除重複讀取到的 uuid_2 等)
+    # 確保資料中只有一個有效的 uuid 欄位
     cols_to_keep = [c for c in df.columns if not c.startswith('uuid_')]
     df = df[cols_to_keep]
     
@@ -359,7 +359,7 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
                 }
                 final_df = pd.concat([final_df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # --- 4. 統一對映課程類別 ---
+    # --- 4. 統一對映課程類別 (修正版：加入班級比對) ---
     if not df_curr.empty:
         complex_map = {}
         target_curr_rows = df_curr[df_curr['科別'] == dept]
@@ -369,6 +369,7 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
             cat = row['課程類別']
             cls_str = row.get('預設適用班級') or row.get('適用班級', '')
             cls_set = parse_classes(cls_str)
+            
             if k not in complex_map: complex_map[k] = []
             complex_map[k].append({'cat': cat, 'classes': cls_set})
             
@@ -385,7 +386,7 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
                         break
                 final_df.at[idx, '課程類別'] = found_cat
 
-    # --- 5. 整理與排序 ---
+    # --- 5. 整理與排序 (強制正確順序) ---
     required_cols = ["勾選", "課程類別", "課程名稱", "適用班級", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "備註1", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "備註2"]
     for col in required_cols:
         if col not in final_df.columns: final_df[col] = ""
@@ -399,22 +400,15 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
         if '課程名稱' in final_df.columns: sort_cols.append('課程名稱'); ascending.append(True)
         final_df = final_df.sort_values(by=sort_cols, ascending=ascending).reset_index(drop=True)
     
-    # 強制去重欄位：只選取真正需要的欄位，避免因為 normalize_df 之前的錯誤導致有重複欄位遺留
-    # 並確保 'uuid' 只有一個
+    # 強制去重欄位與排序
     output_order = ['勾選', 'uuid', '科別', '年級', '學期'] + [c for c in required_cols if c not in ['勾選']]
-    
-    # 把其他沒在 required_cols 的欄位也加回來 (但排除重複)
     existing_cols = list(final_df.columns)
     for c in existing_cols:
         if c not in output_order and c != 'uuid':
             output_order.append(c)
             
     valid_cols = [c for c in output_order if c in final_df.columns]
-    
-    # 🔥 最終手段：確保 columns 是唯一的，如果還有重複，drop_duplicates
     final_df = final_df.loc[:, ~final_df.columns.duplicated()]
-    
-    # 按照順序重排 (只取存在的)
     final_df = final_df.reindex(columns=[c for c in valid_cols if c in final_df.columns])
 
     return final_df
@@ -535,6 +529,7 @@ def delete_row_from_db(target_uuid):
         return True
     return False
 
+# 🔥 補回 sync_history_to_db，供 PDF 產生前調用
 def sync_history_to_db(dept, history_year):
     client = get_connection()
     if not client: return False
@@ -585,6 +580,7 @@ def sync_history_to_db(dept, history_year):
         rows_to_append = []
         for _, row in target_rows.iterrows():
             h_uuid = str(row.get('uuid', '')).strip()
+            # 只有當 UUID 不在 Submission 時才寫入
             if h_uuid in existing_uuids: continue 
 
             def get_val(keys):
@@ -1026,7 +1022,7 @@ def main():
         depts = ["建築科", "機械科", "電機科", "製圖科", "室設科", "國文科", "英文科", "數學科", "自然科", "社會科", "資訊科技", "體育科", "國防科", "藝術科", "健護科", "輔導科", "閩南語"]
         dept = st.selectbox("科別", depts, key='dept_val', on_change=auto_load_data)
         c1, c2 = st.columns(2)
-        sem = c1.selectbox("學期", ["1", "2", "寒", "暑"], key='sem_val', on_change=auto_load_data)
+        sem = c1.selectbox("學期", ["1", "2", "寒", "暑", "返"], key='sem_val', on_change=auto_load_data)
         grade = c2.selectbox("年級", ["1", "2", "3"], key='grade_val', on_change=auto_load_data)
         
         use_hist = st.checkbox("載入歷史資料", key='use_history_checkbox', on_change=auto_load_data)
