@@ -142,14 +142,10 @@ def get_history_years(current_year):
         ws_hist = sh.worksheet(SHEET_HISTORY)
         data = safe_get_all_values(ws_hist)
         if not data or len(data) < 2: return []
-        headers = data[0]
-        year_idx = -1
-        for i, h in enumerate(headers):
-            if str(h).strip() == "學年度":
-                year_idx = i
-                break
+        headers = [str(h).strip() for h in data[0]] # Clean headers
         
-        if year_idx == -1: return []
+        if "學年度" not in headers: return []
+        year_idx = headers.index("學年度")
         
         unique_years = set()
         for row in data[1:]:
@@ -229,7 +225,10 @@ def fetch_raw_dataframes():
         return None, None, None, None
 
 def normalize_df(headers, rows):
-    """將原始資料轉為 DataFrame 並標準化欄位名稱"""
+    """
+    將原始資料轉為 DataFrame 並標準化欄位名稱
+    🔥 修正：強制去空白、修正 UUID 大小寫，確保欄位對齊
+    """
     if not headers: return pd.DataFrame()
     
     mapping = {
@@ -241,7 +240,9 @@ def normalize_df(headers, rows):
     new_headers = []
     seen = {}
     for col in headers:
+        # 🔥 強制去除標題前後空白
         c = str(col).strip()
+        
         if c.lower() == 'uuid':
             new_headers.append('uuid')
             continue
@@ -259,6 +260,7 @@ def normalize_df(headers, rows):
             
     df = pd.DataFrame(rows, columns=new_headers)
     
+    # 確保關鍵欄位為字串且去空白
     for col in ['年級', '學期', '科別', 'uuid', '學年度', '課程名稱', '適用班級']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
@@ -324,7 +326,7 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
                     temp_hist_uuids.add(h_uuid)
                     existing_courses.add(row.get('課程名稱', ''))
 
-    # --- 3. 處理 Curriculum (補空行) ---
+    # --- 3. 處理 Curriculum ---
     if pad_curriculum and not df_curr.empty:
         mask_curr = (df_curr['科別'] == dept)
         if target_grade: mask_curr &= (df_curr['年級'] == str(target_grade))
@@ -346,7 +348,6 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
                 final_df = pd.concat([final_df, pd.DataFrame([new_row])], ignore_index=True)
 
     # --- 4. 統一對映課程類別 (修正版：加入班級比對) ---
-    # 原因：同一門課在同一年級學期，對應不同班級可能有不同類別 (部定/校定)
     if not df_curr.empty:
         # 建立詳細對照表：Key=(課名,年,期) -> List of {cat:類別, classes:班級Set}
         complex_map = {}
@@ -367,19 +368,17 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
             
             if k in complex_map:
                 candidates = complex_map[k]
-                # 預設取第一個，以免完全對不到時開天窗
-                found_cat = candidates[0]['cat']
+                found_cat = candidates[0]['cat'] # 預設取第一個
                 
                 # 嘗試找到有交集的班級設定
                 for cand in candidates:
-                    # 如果 Submission 的班級 與 Curriculum 的班級設定 有交集
                     if not row_classes.isdisjoint(cand['classes']):
                         found_cat = cand['cat']
                         break
                 
                 final_df.at[idx, '課程類別'] = found_cat
 
-    # --- 5. 整理與排序 ---
+    # --- 5. 整理與排序 (強制正確順序) ---
     required_cols = ["勾選", "課程類別", "課程名稱", "適用班級", "教科書(優先1)", "冊次(1)", "出版社(1)", "審定字號(1)", "備註1", "教科書(優先2)", "冊次(2)", "出版社(2)", "審定字號(2)", "備註2"]
     for col in required_cols:
         if col not in final_df.columns: final_df[col] = ""
@@ -387,11 +386,21 @@ def get_merged_data(dept, target_semester=None, target_grade=None, use_history=F
     if not final_df.empty:
         sort_cols = []
         ascending = []
+        # 強制指定排序依據，確保邏輯正確
         if '年級' in final_df.columns: sort_cols.append('年級'); ascending.append(True)
         if '學期' in final_df.columns: sort_cols.append('學期'); ascending.append(True)
         if '課程類別' in final_df.columns: sort_cols.append('課程類別'); ascending.append(False)
         if '課程名稱' in final_df.columns: sort_cols.append('課程名稱'); ascending.append(True)
         final_df = final_df.sort_values(by=sort_cols, ascending=ascending).reset_index(drop=True)
+    
+    # 🔥 關鍵：強制輸出欄位順序，解決視覺上的順序錯亂
+    final_cols = [c for c in final_df.columns if c not in required_cols and c != 'uuid'] 
+    # 把 required_cols 放在最前面，且依照特定順序
+    output_order = ['勾選', 'uuid', '科別', '年級', '學期'] + [c for c in required_cols if c not in ['勾選']] + final_cols
+    
+    # 只選取存在的欄位
+    valid_cols = [c for c in output_order if c in final_df.columns]
+    final_df = final_df[valid_cols]
 
     return final_df
 
@@ -428,7 +437,7 @@ def get_course_list():
         courses.update(st.session_state['curr_course_options'])
     return sorted(list(courses))
 
-# --- 7. 存檔與同步 (修正：保留寫入 History 到 Submission 功能) ---
+# --- 7. 存檔與同步 ---
 def save_single_row(row_data, original_key=None):
     client = get_connection()
     if not client: return False
@@ -446,7 +455,7 @@ def save_single_row(row_data, original_key=None):
         ws_sub.append_row(FULL_HEADERS)
         all_values = [FULL_HEADERS]
     
-    headers = all_values[0]
+    headers = [str(h).strip() for h in all_values[0]]
     if "教科書(2)" not in headers or "備註2" not in headers:
         ws_sub.update(range_name="A1", values=[FULL_HEADERS])
         headers = FULL_HEADERS
@@ -498,7 +507,7 @@ def delete_row_from_db(target_uuid):
     except: return False
     all_values = safe_get_all_values(ws_sub)
     if not all_values: return False
-    headers = all_values[0]
+    headers = [str(h).strip() for h in all_values[0]]
     if "uuid" not in headers: return False 
     uuid_idx = headers.index("uuid")
     target_row_index = -1
@@ -528,7 +537,7 @@ def sync_history_to_db(dept, history_year):
         FULL_HEADERS = ["uuid", "填報時間", "學年度", "科別", "學期", "年級", "課程名稱", "教科書(1)", "冊次(1)", "出版社(1)", "字號(1)", "教科書(2)", "冊次(2)", "出版社(2)", "字號(2)", "適用班級", "備註1", "備註2"]
 
         if data_sub:
-             sub_headers = data_sub[0]
+             sub_headers = [str(h).strip() for h in data_sub[0]]
              if "教科書(2)" not in sub_headers or "備註2" not in sub_headers:
                  ws_sub.update(range_name="A1", values=[FULL_HEADERS])
                  sub_headers = FULL_HEADERS
@@ -613,7 +622,6 @@ def create_pdf_report(dept):
             self.set_font(CHINESE_FONT, 'I', 8)
             self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
     
-    # 預覽/PDF 邏輯：不補 Curriculum 空行
     df = load_preview_data(dept) 
     if df.empty: return None
     
